@@ -1,0 +1,11 @@
+export type Role='manager'|'inspector'|'promoter';
+export type TaskStatus='pending'|'in_progress'|'submitted'|'approved'|'changes_requested'|'weekly_unfinished'|'cancelled';
+export type ReviewStatus='pending_review'|'approved'|'changes_requested';
+export type Rating='dissatisfied'|'neutral'|'satisfied';
+export interface Profile{auth_user_id:string;user_id:string;role:Role;status:'ativo'|'inativo';display_name:string}
+export interface Promoter{id:string;nickname:string;whatsapp:string;inspection_count:number;last_inspected_at:string|null;reputation_score:number|null;reputation_updated_at:string|null}
+export interface Inspector{id:string;nickname:string;current_phone:string;target_tasks:number}
+export interface Task{id:string;task_date:string;week_start:string;batch_id:string;inspector_id:string;inspector_phone:string;promoter_id:string;status:TaskStatus;created_at:string;completed_at:string|null;promoter?:Promoter;inspector?:Inspector}
+export interface Report{id:string;task_id:string;inspector_id:string;promoter_id:string;promoter_status:string;other_status_note:string|null;rating:Rating;reasons:string[];other_reason_note:string|null;summary:string;evidence_url:string;requires_follow_up:boolean;review_status:ReviewStatus;manager_note:string|null;submitted_at:string;updated_at:string;reviewed_at:string|null;reviewed_by:string|null;task?:Task}
+export interface Leaderboard{id:string;week_start:string;promoter_id:string;promoter_name:string;player_growth_score:number;reputation_score:number;weekly_rebate_score:number;total_score:number;rank:number}
+export interface SessionProfile{user:Profile}

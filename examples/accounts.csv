@@ -1,0 +1,4 @@
+user_id,password,role,status
+1001,Gerente@2026,gerente,ativo
+10820570,Promoter@2026,promotor,ativo
+Q001,Inspector@2026,inspetor,ativo
