@@ -161,7 +161,13 @@ function ManagerReports({ notify }: { notify: any }) {
     const [promoters, setPromoters] = useState<Promoter[]>([]);
 
     const [selectedInspector, setSelectedInspector] = useState('');
+
+    // Excel 推广员搜索
     const [promoterSearch, setPromoterSearch] = useState('');
+    const [selectedPromoter, setSelectedPromoter] = useState<Promoter | null>(
+        null,
+    );
+    const [searchFocused, setSearchFocused] = useState(false);
 
     const [review, setReview] =
         useState<ReviewStatus | 'all'>('pending_review');
@@ -176,6 +182,10 @@ function ManagerReports({ notify }: { notify: any }) {
     const [batchBusy, setBatchBusy] = useState(false);
     const [exportBusy, setExportBusy] = useState(false);
 
+    // =====================================================
+    // 加载报告
+    // =====================================================
+
     const load = async () => {
         let query = supabase
             .from('report_details')
@@ -187,10 +197,7 @@ function ManagerReports({ notify }: { notify: any }) {
             });
 
         if (review !== 'all') {
-            query = query.eq(
-                'review_status',
-                review,
-            );
+            query = query.eq('review_status', review);
         }
 
         const { data, error } = await query;
@@ -202,6 +209,10 @@ function ManagerReports({ notify }: { notify: any }) {
 
         setRows(data || []);
     };
+
+    // =====================================================
+    // 加载推广员
+    // =====================================================
 
     const loadPromoters = async () => {
         const { data, error } = await supabase
@@ -228,6 +239,52 @@ function ManagerReports({ notify }: { notify: any }) {
         void loadPromoters();
     }, []);
 
+    // =====================================================
+    // 推广员实时搜索
+    // 支持 ID / 昵称部分匹配
+    // 最多显示 8 个结果
+    // =====================================================
+
+    const promoterSuggestions = useMemo(() => {
+        const keyword = promoterSearch.trim().toLowerCase();
+
+        if (!keyword || selectedPromoter) {
+            return [];
+        }
+
+        return promoters
+            .filter((promoter) => {
+                const id = String(promoter.id || '').toLowerCase();
+                const nickname = String(promoter.nickname || '').toLowerCase();
+
+                return (
+                    id.includes(keyword) ||
+                    nickname.includes(keyword)
+                );
+            })
+            .slice(0, 8);
+    }, [promoters, promoterSearch, selectedPromoter]);
+
+    const choosePromoter = (promoter: Promoter) => {
+        setSelectedPromoter(promoter);
+
+        setPromoterSearch(
+            `${promoter.id} · ${promoter.nickname}`,
+        );
+
+        setSearchFocused(false);
+    };
+
+    const clearPromoterSearch = () => {
+        setSelectedPromoter(null);
+        setPromoterSearch('');
+        setSearchFocused(false);
+    };
+
+    // =====================================================
+    // 质检员报告分组
+    // =====================================================
+
     const groups = useMemo(() => {
         const map = new Map<string, any>();
 
@@ -249,24 +306,15 @@ function ManagerReports({ notify }: { notify: any }) {
 
             group.total += 1;
 
-            if (
-                report.review_status ===
-                'pending_review'
-            ) {
+            if (report.review_status === 'pending_review') {
                 group.pending += 1;
             }
 
-            if (
-                report.review_status ===
-                'approved'
-            ) {
+            if (report.review_status === 'approved') {
                 group.approved += 1;
             }
 
-            if (
-                report.review_status ===
-                'changes_requested'
-            ) {
+            if (report.review_status === 'changes_requested') {
                 group.changes += 1;
             }
         }
@@ -274,18 +322,24 @@ function ManagerReports({ notify }: { notify: any }) {
         return [...map.values()];
     }, [rows]);
 
+    // =====================================================
+    // 当前选择质检员的报告
+    // =====================================================
+
     const filtered = selectedInspector
         ? rows.filter(
               (report) =>
-                  report.inspector_id ===
-                  selectedInspector,
+                  report.inspector_id === selectedInspector,
           )
         : [];
 
+    // =====================================================
+    // 批量审核
+    // =====================================================
+
     const selectableReports = filtered.filter(
         (report) =>
-            report.review_status ===
-            'pending_review',
+            report.review_status === 'pending_review',
     );
 
     const selectableIds = selectableReports.map(
@@ -298,33 +352,22 @@ function ManagerReports({ notify }: { notify: any }) {
             selectedReports.includes(id),
         );
 
-    const selectedCount =
-        selectedReports.length;
+    const selectedCount = selectedReports.length;
 
-    const selectedSatisfiedCount =
-        filtered.filter(
-            (report) =>
-                selectedReports.includes(
-                    report.id,
-                ) &&
-                report.rating ===
-                    'satisfied' &&
-                report.review_status ===
-                    'pending_review',
-        ).length;
+    const selectedSatisfiedCount = filtered.filter(
+        (report) =>
+            selectedReports.includes(report.id) &&
+            report.rating === 'satisfied' &&
+            report.review_status === 'pending_review',
+    ).length;
 
-    const pendingSatisfiedReports =
-        filtered.filter(
-            (report) =>
-                report.rating ===
-                    'satisfied' &&
-                report.review_status ===
-                    'pending_review',
-        );
+    const pendingSatisfiedReports = filtered.filter(
+        (report) =>
+            report.rating === 'satisfied' &&
+            report.review_status === 'pending_review',
+    );
 
-    const chooseInspector = (
-        inspectorId: string,
-    ) => {
+    const chooseInspector = (inspectorId: string) => {
         setSelectedInspector(inspectorId);
         setSelectedReports([]);
         setActive(null);
@@ -337,57 +380,51 @@ function ManagerReports({ notify }: { notify: any }) {
     ) => {
         setSelectedReports((current) => {
             if (checked) {
-                return current.includes(
-                    reportId,
-                )
+                return current.includes(reportId)
                     ? current
-                    : [
-                          ...current,
-                          reportId,
-                      ];
+                    : [...current, reportId];
             }
 
             return current.filter(
-                (id) =>
-                    id !== reportId,
+                (id) => id !== reportId,
             );
         });
     };
 
-    const toggleAll = (
-        checked: boolean,
-    ) => {
+    const toggleAll = (checked: boolean) => {
         if (checked) {
-            setSelectedReports(
-                selectableIds,
-            );
+            setSelectedReports(selectableIds);
         } else {
             setSelectedReports([]);
         }
     };
+
+    // =====================================================
+    // 审核 RPC
+    // =====================================================
 
     const reviewOneReport = async (
         reportId: string,
         status: ReviewStatus,
         managerNote = '',
     ) => {
-        const { error } =
-            await supabase.rpc(
-                'review_inspection_report',
-                {
-                    p_report_id:
-                        reportId,
-                    p_review_status:
-                        status,
-                    p_manager_note:
-                        managerNote,
-                },
-            );
+        const { error } = await supabase.rpc(
+            'review_inspection_report',
+            {
+                p_report_id: reportId,
+                p_review_status: status,
+                p_manager_note: managerNote,
+            },
+        );
 
         if (error) {
             throw error;
         }
     };
+
+    // =====================================================
+    // 单份审核
+    // =====================================================
 
     const decide = async (
         status: ReviewStatus,
@@ -412,504 +449,437 @@ function ManagerReports({ notify }: { notify: any }) {
             setActive(null);
             setNote('');
 
-            setSelectedReports(
-                (current) =>
-                    current.filter(
-                        (id) =>
-                            id !==
-                            active.id,
-                    ),
+            setSelectedReports((current) =>
+                current.filter(
+                    (id) => id !== active.id,
+                ),
             );
 
             await load();
         } catch (error: any) {
             notify(
-                error?.message ||
-                    '审核失败',
+                error?.message || '审核失败',
                 'error',
             );
         }
     };
 
-    const approveReportIds =
-        async (
-            reportIds: string[],
-            successMessage: string,
-        ) => {
-            if (
-                reportIds.length === 0
-            ) {
-                notify(
-                    '没有可以审核的报告',
-                    'error',
+    // =====================================================
+    // 批量审核
+    // =====================================================
+
+    const approveReportIds = async (
+        reportIds: string[],
+        successMessage: string,
+    ) => {
+        if (reportIds.length === 0) {
+            notify(
+                '没有可以审核的报告',
+                'error',
+            );
+
+            return;
+        }
+
+        const confirmed = window.confirm(
+            `确定一次审核通过 ${reportIds.length} 份报告吗？`,
+        );
+
+        if (!confirmed) {
+            return;
+        }
+
+        setBatchBusy(true);
+
+        let successCount = 0;
+        let failedCount = 0;
+        let firstError = '';
+
+        for (const reportId of reportIds) {
+            try {
+                await reviewOneReport(
+                    reportId,
+                    'approved',
+                    '经理批量审核通过',
                 );
 
-                return;
-            }
+                successCount += 1;
+            } catch (error: any) {
+                failedCount += 1;
 
-            const confirmed =
-                window.confirm(
-                    `确定一次审核通过 ${reportIds.length} 份报告吗？`,
-                );
-
-            if (!confirmed) {
-                return;
-            }
-
-            setBatchBusy(true);
-
-            let successCount = 0;
-            let failedCount = 0;
-            let firstError = '';
-
-            for (const reportId of reportIds) {
-                try {
-                    await reviewOneReport(
-                        reportId,
-                        'approved',
-                        '经理批量审核通过',
-                    );
-
-                    successCount += 1;
-                } catch (
-                    error: any
-                ) {
-                    failedCount += 1;
-
-                    if (
-                        !firstError
-                    ) {
-                        firstError =
-                            error?.message ||
-                            '未知错误';
-                    }
+                if (!firstError) {
+                    firstError =
+                        error?.message ||
+                        '未知错误';
                 }
             }
+        }
 
-            setBatchBusy(false);
-            setSelectedReports([]);
-            setActive(null);
-            setNote('');
+        setBatchBusy(false);
+        setSelectedReports([]);
+        setActive(null);
+        setNote('');
 
-            await load();
+        await load();
 
-            if (
-                failedCount > 0
-            ) {
-                notify(
-                    `成功 ${successCount} 份，失败 ${failedCount} 份。${firstError}`,
-                    'error',
-                );
-
-                return;
-            }
-
+        if (failedCount > 0) {
             notify(
-                `${successMessage}：${successCount} 份`,
+                `成功 ${successCount} 份，失败 ${failedCount} 份 ${firstError}`,
+                'error',
             );
-        };
 
-    const approveSelected =
-        async () => {
-            const validSelectedIds =
-                filtered
-                    .filter(
-                        (report) =>
-                            selectedReports.includes(
-                                report.id,
-                            ) &&
-                            report.review_status ===
-                                'pending_review',
-                    )
-                    .map(
-                        (report) =>
-                            report.id,
-                    );
+            return;
+        }
 
-            await approveReportIds(
-                validSelectedIds,
-                '批量审核完成',
-            );
-        };
-
-    const approveAllSatisfied =
-        async () => {
-            const satisfiedIds =
-                pendingSatisfiedReports.map(
-                    (report) =>
-                        report.id,
-                );
-
-            await approveReportIds(
-                satisfiedIds,
-                '满意报告批量审核完成',
-            );
-        };
-
-    const openReport = (
-        report: any,
-    ) => {
-        setActive(report);
-
-        setNote(
-            report.manager_note ||
-                '',
+        notify(
+            `${successMessage}：${successCount} 份`,
         );
     };
 
-    const exportExcel =
-        async () => {
-            if (!start || !end) {
+    const approveSelected = async () => {
+        const validSelectedIds = filtered
+            .filter(
+                (report) =>
+                    selectedReports.includes(
+                        report.id,
+                    ) &&
+                    report.review_status ===
+                        'pending_review',
+            )
+            .map(
+                (report) => report.id,
+            );
+
+        await approveReportIds(
+            validSelectedIds,
+            '批量审核完成',
+        );
+    };
+
+    const approveAllSatisfied = async () => {
+        const satisfiedIds =
+            pendingSatisfiedReports.map(
+                (report) => report.id,
+            );
+
+        await approveReportIds(
+            satisfiedIds,
+            '满意报告批量审核完成',
+        );
+    };
+
+    const openReport = (report: any) => {
+        setActive(report);
+
+        setNote(
+            report.manager_note || '',
+        );
+    };
+
+    // =====================================================
+    // Excel 导出
+    // 搜索框为空 = 全部推广员
+    // 有内容时必须先选择搜索结果
+    // =====================================================
+
+    const exportExcel = async () => {
+        if (!start || !end) {
+            notify(
+                '请选择开始和结束日期',
+                'error',
+            );
+
+            return;
+        }
+
+        if (start > end) {
+            notify(
+                '开始日期不能晚于结束日期',
+                'error',
+            );
+
+            return;
+        }
+
+        if (
+            promoterSearch.trim() &&
+            !selectedPromoter
+        ) {
+            notify(
+                '请先从搜索结果中选择推广员',
+                'error',
+            );
+
+            return;
+        }
+
+        setExportBusy(true);
+
+        try {
+            let query = supabase
+                .from('report_details')
+                .select('*')
+                .gte('task_date', start)
+                .lte('task_date', end)
+                .order('task_date', {
+                    ascending: true,
+                });
+
+            if (selectedPromoter) {
+                query = query.eq(
+                    'promoter_id',
+                    selectedPromoter.id,
+                );
+            }
+
+            const { data, error } =
+                await query;
+
+            if (error) {
+                throw error;
+            }
+
+            const reportRows =
+                data || [];
+
+            if (reportRows.length === 0) {
                 notify(
-                    '请选择开始和结束日期',
+                    '当前条件下没有质检报告',
                     'error',
                 );
 
                 return;
             }
 
-            if (start > end) {
-                notify(
-                    '开始日期不能晚于结束日期',
-                    'error',
+            const exportRows =
+                reportRows.map(
+                    (
+                        report: any,
+                        index: number,
+                    ) => ({
+                        '序号':
+                            index + 1,
+
+                        '质检日期':
+                            report.task_date,
+
+                        '推广员ID':
+                            report.promoter_id,
+
+                        '推广员昵称':
+                            report.promoter_name,
+
+                        '质检员ID':
+                            report.inspector_id,
+
+                        '质检员昵称':
+                            report.inspector_name,
+
+                        '质检号码':
+                            report.inspector_phone,
+
+                        '推广员状态':
+                            report.promoter_status,
+
+                        '评价':
+                            report.rating ===
+                            'satisfied'
+                                ? '满意'
+                                : report.rating ===
+                                    'neutral'
+                                  ? '一般'
+                                  : '不满意',
+
+                        '评价原因':
+                            Array.isArray(
+                                report.reasons,
+                            )
+                                ? report.reasons.join(
+                                      '；',
+                                  )
+                                : '',
+
+                        '其他状态说明':
+                            report.other_status_note ||
+                            '',
+
+                        '其他原因说明':
+                            report.other_reason_note ||
+                            '',
+
+                        '质检总结':
+                            report.summary ||
+                            '',
+
+                        '证据链接':
+                            report.evidence_url ||
+                            '',
+
+                        '需要经理跟进':
+                            report.requires_follow_up
+                                ? '是'
+                                : '否',
+
+                        '审核状态':
+                            report.review_status ===
+                            'approved'
+                                ? '审核通过'
+                                : report.review_status ===
+                                    'changes_requested'
+                                  ? '需要修改'
+                                  : '待审核',
+
+                        '经理备注':
+                            report.manager_note ||
+                            '',
+
+                        '提交时间':
+                            report.submitted_at
+                                ? new Date(
+                                      report.submitted_at,
+                                  ).toLocaleString(
+                                      'zh-CN',
+                                  )
+                                : '',
+
+                        '审核时间':
+                            report.reviewed_at
+                                ? new Date(
+                                      report.reviewed_at,
+                                  ).toLocaleString(
+                                      'zh-CN',
+                                  )
+                                : '',
+
+                        '审核人':
+                            report.reviewed_by ||
+                            '',
+                    }),
                 );
 
-                return;
-            }
+            const worksheet =
+                XLSX.utils.json_to_sheet(
+                    exportRows,
+                );
 
-            setExportBusy(true);
+            worksheet['!cols'] = [
+                { wch: 8 },
+                { wch: 14 },
+                { wch: 18 },
+                { wch: 24 },
+                { wch: 18 },
+                { wch: 24 },
+                { wch: 20 },
+                { wch: 24 },
+                { wch: 12 },
+                { wch: 45 },
+                { wch: 35 },
+                { wch: 35 },
+                { wch: 65 },
+                { wch: 65 },
+                { wch: 18 },
+                { wch: 18 },
+                { wch: 45 },
+                { wch: 24 },
+                { wch: 24 },
+                { wch: 18 },
+            ];
 
-            try {
-                let promoterId = '';
+            const range =
+                XLSX.utils.decode_range(
+                    worksheet['!ref'] ||
+                        'A1:A1',
+                );
 
-                const keyword =
-                    promoterSearch
-                        .trim()
-                        .toLowerCase();
-
-                if (keyword) {
-                    const matched =
-                        promoters.find(
-                            (promoter) =>
-                                promoter.id
-                                    .toLowerCase() ===
-                                    keyword ||
-                                promoter.nickname
-                                    .toLowerCase() ===
-                                    keyword,
-                        );
-
-                    if (!matched) {
-                        notify(
-                            '找不到这个推广员ID或昵称',
-                            'error',
-                        );
-
-                        return;
-                    }
-
-                    promoterId =
-                        matched.id;
-                }
-
-                let query =
-                    supabase
-                        .from(
-                            'report_details',
-                        )
-                        .select('*')
-                        .gte(
-                            'task_date',
-                            start,
-                        )
-                        .lte(
-                            'task_date',
-                            end,
-                        )
-                        .order(
-                            'task_date',
-                            {
-                                ascending:
-                                    true,
-                            },
-                        );
-
-                if (promoterId) {
-                    query =
-                        query.eq(
-                            'promoter_id',
-                            promoterId,
-                        );
-                }
-
-                const {
-                    data,
-                    error,
-                } = await query;
-
-                if (error) {
-                    throw error;
-                }
-
-                const reportRows =
-                    data || [];
-
-                if (
-                    reportRows.length ===
-                    0
-                ) {
-                    notify(
-                        '当前条件下没有质检报告',
-                        'error',
-                    );
-
-                    return;
-                }
-
-                const exportRows =
-                    reportRows.map(
-                        (
-                            report: any,
-                            index: number,
-                        ) => ({
-                            '序号':
-                                index +
-                                1,
-
-                            '质检日期':
-                                report.task_date,
-
-                            '推广员ID':
-                                report.promoter_id,
-
-                            '推广员昵称':
-                                report.promoter_name,
-
-                            '质检员ID':
-                                report.inspector_id,
-
-                            '质检员昵称':
-                                report.inspector_name,
-
-                            '质检号码':
-                                report.inspector_phone,
-
-                            '推广员状态':
-                                report.promoter_status,
-
-                            '评价':
-                                report.rating ===
-                                'satisfied'
-                                    ? '满意'
-                                    : report.rating ===
-                                        'neutral'
-                                      ? '一般'
-                                      : '不满意',
-
-                            '评价原因':
-                                Array.isArray(
-                                    report.reasons,
-                                )
-                                    ? report.reasons.join(
-                                          '；',
-                                      )
-                                    : '',
-
-                            '其他状态说明':
-                                report.other_status_note ||
-                                '',
-
-                            '其他原因说明':
-                                report.other_reason_note ||
-                                '',
-
-                            '质检总结':
-                                report.summary ||
-                                '',
-
-                            '证据链接':
-                                report.evidence_url ||
-                                '',
-
-                            '需要经理跟进':
-                                report.requires_follow_up
-                                    ? '是'
-                                    : '否',
-
-                            '审核状态':
-                                report.review_status ===
-                                'approved'
-                                    ? '审核通过'
-                                    : report.review_status ===
-                                        'changes_requested'
-                                      ? '需要修改'
-                                      : '待审核',
-
-                            '经理备注':
-                                report.manager_note ||
-                                '',
-
-                            '提交时间':
-                                report.submitted_at
-                                    ? new Date(
-                                          report.submitted_at,
-                                      ).toLocaleString(
-                                          'zh-CN',
-                                      )
-                                    : '',
-
-                            '审核时间':
-                                report.reviewed_at
-                                    ? new Date(
-                                          report.reviewed_at,
-                                      ).toLocaleString(
-                                          'zh-CN',
-                                      )
-                                    : '',
-
-                            '审核人':
-                                report.reviewed_by ||
-                                '',
-                        }),
-                    );
-
-                const worksheet =
-                    XLSX.utils.json_to_sheet(
-                        exportRows,
-                    );
-
-                worksheet['!cols'] =
-                    [
-                        { wch: 8 },
-                        { wch: 14 },
-                        { wch: 18 },
-                        { wch: 20 },
-                        { wch: 18 },
-                        { wch: 20 },
-                        { wch: 20 },
-                        { wch: 24 },
-                        { wch: 12 },
-                        { wch: 45 },
-                        { wch: 35 },
-                        { wch: 35 },
-                        { wch: 65 },
-                        { wch: 65 },
-                        { wch: 18 },
-                        { wch: 18 },
-                        { wch: 45 },
-                        { wch: 24 },
-                        { wch: 24 },
-                        { wch: 18 },
-                    ];
-
-                const range =
-                    XLSX.utils.decode_range(
-                        worksheet[
-                            '!ref'
-                        ] ||
-                            'A1:A1',
-                    );
-
-                worksheet[
-                    '!autofilter'
-                ] = {
-                    ref: XLSX.utils.encode_range(
-                        {
-                            s: {
-                                r: 0,
-                                c: 0,
-                            },
-
-                            e: {
-                                r: range
-                                    .e.r,
-                                c: range
-                                    .e.c,
-                            },
+            worksheet['!autofilter'] = {
+                ref: XLSX.utils.encode_range(
+                    {
+                        s: {
+                            r: 0,
+                            c: 0,
                         },
-                    ),
-                };
 
-                const workbook =
-                    XLSX.utils.book_new();
+                        e: {
+                            r: range.e.r,
+                            c: range.e.c,
+                        },
+                    },
+                ),
+            };
 
-                XLSX.utils.book_append_sheet(
-                    workbook,
-                    worksheet,
-                    '质检报告',
-                );
+            const workbook =
+                XLSX.utils.book_new();
 
-                let fileLabel =
-                    '全部推广员';
+            XLSX.utils.book_append_sheet(
+                workbook,
+                worksheet,
+                '质检报告',
+            );
 
-                if (promoterId) {
-                    const matched =
-                        promoters.find(
-                            (promoter) =>
-                                promoter.id ===
-                                promoterId,
-                        );
+            let fileLabel =
+                '全部推广员';
 
-                    if (matched) {
-                        fileLabel =
-                            `${matched.nickname}_${matched.id}`;
-                    }
-                }
-
-                const safeFileLabel =
-                    fileLabel.replace(
-                        /[\\/:*?"<>|]/g,
-                        '_',
-                    );
-
-                const fileName =
-                    `质检报告_${safeFileLabel}_${start}_${end}.xlsx`;
-
-                XLSX.writeFile(
-                    workbook,
-                    fileName,
-                );
-
-                notify(
-                    `已导出 ${reportRows.length} 份质检报告`,
-                );
-            } catch (
-                error: any
-            ) {
-                notify(
-                    error?.message ||
-                        'Excel 导出失败',
-                    'error',
-                );
-            } finally {
-                setExportBusy(false);
+            if (selectedPromoter) {
+                fileLabel =
+                    `${selectedPromoter.nickname}_${selectedPromoter.id}`;
             }
-        };
+
+            const safeFileLabel =
+                fileLabel.replace(
+                    /[\\/:*?"<>|]/g,
+                    '_',
+                );
+
+            const fileName =
+                `质检报告_${safeFileLabel}_${start}_${end}.xlsx`;
+
+            XLSX.writeFile(
+                workbook,
+                fileName,
+            );
+
+            notify(
+                `已导出 ${reportRows.length} 份质检报告`,
+            );
+        } catch (error: any) {
+            notify(
+                error?.message ||
+                    'Excel 导出失败',
+                'error',
+            );
+        } finally {
+            setExportBusy(false);
+        }
+    };
+
+    // =====================================================
+    // 页面
+    // =====================================================
 
     return (
         <>
             <PageHead
                 title="报告中心"
-                text="选择日期范围，可输入推广员ID或昵称导出指定推广员报告，留空则导出全部"
+                text="按日期查看审核报告，也可以搜索推广员并导出 Excel"
             >
                 <div
                     style={{
                         display: 'grid',
                         gap: 10,
-                        minWidth: 320,
+                        minWidth: 340,
+                        maxWidth: 520,
+                        width: '100%',
                     }}
                 >
+                    {/* 日期 */}
+
                     <div className="range-inline">
                         <input
                             type="date"
                             value={start}
-                            onChange={(
-                                event,
-                            ) =>
+                            onChange={(event) =>
                                 setStart(
-                                    event
-                                        .target
-                                        .value,
+                                    event.target.value,
                                 )
                             }
                         />
@@ -919,67 +889,293 @@ function ManagerReports({ notify }: { notify: any }) {
                         <input
                             type="date"
                             value={end}
-                            onChange={(
-                                event,
-                            ) =>
+                            onChange={(event) =>
                                 setEnd(
-                                    event
-                                        .target
-                                        .value,
+                                    event.target.value,
                                 )
                             }
                         />
                     </div>
+
+                    {/* 推广员搜索 */}
 
                     <div
                         style={{
-                            display:
-                                'flex',
-                            gap: 10,
-                            flexWrap:
-                                'wrap',
+                            position: 'relative',
+                            width: '100%',
                         }}
                     >
-                        <input
-                            type="text"
-                            value={
-                                promoterSearch
-                            }
-                            onChange={(
-                                event,
-                            ) =>
-                                setPromoterSearch(
-                                    event
-                                        .target
-                                        .value,
-                                )
-                            }
-                            placeholder="推广员ID / 昵称，留空导出全部"
+                        <div
                             style={{
-                                minWidth:
-                                    260,
-                                flex: 1,
+                                display: 'flex',
+                                gap: 8,
+                                width: '100%',
                             }}
-                        />
-
-                        <button
-                            className="btn secondary"
-                            onClick={
-                                exportExcel
-                            }
-                            disabled={
-                                exportBusy
-                            }
                         >
-                            <Download />
+                            <div
+                                style={{
+                                    position: 'relative',
+                                    flex: 1,
+                                }}
+                            >
+                                <Search
+                                    size={18}
+                                    style={{
+                                        position: 'absolute',
+                                        left: 12,
+                                        top: '50%',
+                                        transform:
+                                            'translateY(-50%)',
+                                        pointerEvents:
+                                            'none',
+                                        color:
+                                            '#778196',
+                                    }}
+                                />
 
-                            {exportBusy
-                                ? '正在导出…'
-                                : '导出 Excel'}
-                        </button>
+                                <input
+                                    type="text"
+                                    value={
+                                        promoterSearch
+                                    }
+                                    onFocus={() =>
+                                        setSearchFocused(
+                                            true,
+                                        )
+                                    }
+                                    onChange={(
+                                        event,
+                                    ) => {
+                                        setPromoterSearch(
+                                            event
+                                                .target
+                                                .value,
+                                        );
+
+                                        setSelectedPromoter(
+                                            null,
+                                        );
+
+                                        setSearchFocused(
+                                            true,
+                                        );
+                                    }}
+                                    placeholder="输入推广员ID或昵称"
+                                    style={{
+                                        width: '100%',
+                                        paddingLeft: 40,
+                                    }}
+                                />
+                            </div>
+
+                            {(promoterSearch ||
+                                selectedPromoter) && (
+                                <button
+                                    type="button"
+                                    className="btn ghost"
+                                    onClick={
+                                        clearPromoterSearch
+                                    }
+                                >
+                                    <X />
+                                    清除
+                                </button>
+                            )}
+                        </div>
+
+                        {/* 搜索建议 */}
+
+                        {searchFocused &&
+                            promoterSearch.trim() &&
+                            !selectedPromoter && (
+                                <div
+                                    style={{
+                                        position:
+                                            'absolute',
+                                        top:
+                                            'calc(100% + 6px)',
+                                        left: 0,
+                                        right: 0,
+                                        zIndex: 100,
+                                        background:
+                                            '#ffffff',
+                                        border:
+                                            '1px solid #dfe6ef',
+                                        borderRadius:
+                                            14,
+                                        boxShadow:
+                                            '0 14px 34px rgba(30,45,70,.15)',
+                                        overflow:
+                                            'hidden',
+                                        maxHeight:
+                                            330,
+                                        overflowY:
+                                            'auto',
+                                    }}
+                                >
+                                    {promoterSuggestions.length >
+                                    0 ? (
+                                        promoterSuggestions.map(
+                                            (
+                                                promoter,
+                                            ) => (
+                                                <button
+                                                    type="button"
+                                                    key={
+                                                        promoter.id
+                                                    }
+                                                    onMouseDown={(
+                                                        event,
+                                                    ) => {
+                                                        event.preventDefault();
+
+                                                        choosePromoter(
+                                                            promoter,
+                                                        );
+                                                    }}
+                                                    style={{
+                                                        width:
+                                                            '100%',
+                                                        display:
+                                                            'grid',
+                                                        gridTemplateColumns:
+                                                            'minmax(120px, auto) 1fr',
+                                                        gap: 14,
+                                                        padding:
+                                                            '12px 14px',
+                                                        textAlign:
+                                                            'left',
+                                                        background:
+                                                            '#ffffff',
+                                                        border:
+                                                            'none',
+                                                        borderBottom:
+                                                            '1px solid #edf0f4',
+                                                        cursor:
+                                                            'pointer',
+                                                    }}
+                                                >
+                                                    <code
+                                                        style={{
+                                                            fontWeight:
+                                                                700,
+                                                            color:
+                                                                '#315efb',
+                                                        }}
+                                                    >
+                                                        {
+                                                            promoter.id
+                                                        }
+                                                    </code>
+
+                                                    <span>
+                                                        {
+                                                            promoter.nickname
+                                                        }
+                                                    </span>
+                                                </button>
+                                            ),
+                                        )
+                                    ) : (
+                                        <div
+                                            style={{
+                                                padding:
+                                                    '16px',
+                                                color:
+                                                    '#778196',
+                                                textAlign:
+                                                    'center',
+                                            }}
+                                        >
+                                            没有匹配的推广员
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                        {/* 已选择推广员 */}
+
+                        {selectedPromoter && (
+                            <div
+                                style={{
+                                    marginTop: 8,
+                                    padding:
+                                        '10px 12px',
+                                    borderRadius:
+                                        12,
+                                    background:
+                                        '#eef4ff',
+                                    border:
+                                        '1px solid #cbd9ff',
+                                    display:
+                                        'flex',
+                                    alignItems:
+                                        'center',
+                                    justifyContent:
+                                        'space-between',
+                                    gap: 12,
+                                }}
+                            >
+                                <div>
+                                    <small
+                                        style={{
+                                            display:
+                                                'block',
+                                            color:
+                                                '#778196',
+                                        }}
+                                    >
+                                        已选择推广员
+                                    </small>
+
+                                    <b>
+                                        {
+                                            selectedPromoter.nickname
+                                        }
+                                    </b>
+
+                                    <span
+                                        style={{
+                                            marginLeft:
+                                                8,
+                                            color:
+                                                '#315efb',
+                                        }}
+                                    >
+                                        ID{' '}
+                                        {
+                                            selectedPromoter.id
+                                        }
+                                    </span>
+                                </div>
+
+                                <Check
+                                    size={18}
+                                    color="#22a06b"
+                                />
+                            </div>
+                        )}
                     </div>
+
+                    {/* Excel */}
+
+                    <button
+                        className="btn secondary"
+                        onClick={exportExcel}
+                        disabled={exportBusy}
+                    >
+                        <Download />
+
+                        {exportBusy
+                            ? '正在导出…'
+                            : selectedPromoter
+                              ? `导出 ${selectedPromoter.nickname} 的 Excel`
+                              : '导出全部推广员 Excel'}
+                    </button>
                 </div>
             </PageHead>
+
+            {/* 审核状态 */}
 
             <div className="review-tabs">
                 {(
@@ -989,38 +1185,31 @@ function ManagerReports({ notify }: { notify: any }) {
                         'changes_requested',
                         'all',
                     ] as const
-                ).map(
-                    (status) => (
-                        <button
-                            key={
-                                status
-                            }
-                            className={
-                                review ===
-                                status
-                                    ? 'active'
-                                    : ''
-                            }
-                            onClick={() => {
-                                setReview(
-                                    status,
-                                );
-
-                                setSelectedReports(
-                                    [],
-                                );
-                            }}
-                        >
-                            {status ===
-                            'all'
-                                ? '全部'
-                                : reviewLabel[
-                                      status
-                                  ]}
-                        </button>
-                    ),
-                )}
+                ).map((status) => (
+                    <button
+                        key={status}
+                        className={
+                            review === status
+                                ? 'active'
+                                : ''
+                        }
+                        onClick={() => {
+                            setReview(status);
+                            setSelectedReports(
+                                [],
+                            );
+                        }}
+                    >
+                        {status === 'all'
+                            ? '全部'
+                            : reviewLabel[
+                                  status
+                              ]}
+                    </button>
+                ))}
             </div>
+
+            {/* 批量审核 */}
 
             {selectedInspector && (
                 <section
@@ -1030,8 +1219,7 @@ function ManagerReports({ notify }: { notify: any }) {
                         border:
                             '1px solid #dfe6ef',
                         borderRadius: 16,
-                        background:
-                            '#ffffff',
+                        background: '#ffffff',
                         display: 'flex',
                         alignItems:
                             'center',
@@ -1045,9 +1233,7 @@ function ManagerReports({ notify }: { notify: any }) {
                     <div>
                         <b>
                             已选择{' '}
-                            {
-                                selectedCount
-                            }{' '}
+                            {selectedCount}{' '}
                             份报告
                         </b>
 
@@ -1165,6 +1351,8 @@ function ManagerReports({ notify }: { notify: any }) {
                 </section>
             )}
 
+            {/* 左右报告区域 */}
+
             <div className="review-layout">
                 <Panel title="按质检员查看审核进度">
                     <div className="inspector-review-list">
@@ -1265,7 +1453,7 @@ function ManagerReports({ notify }: { notify: any }) {
                                         <label
                                             style={{
                                                 width: 42,
-                                                height: 42,
+                                                height: 50,
                                                 display:
                                                     'grid',
                                                 placeItems:
@@ -1311,6 +1499,10 @@ function ManagerReports({ notify }: { notify: any }) {
                                                     report,
                                                 )
                                             }
+                                            style={{
+                                                minHeight:
+                                                    58,
+                                            }}
                                         >
                                             <div>
                                                 <b>
@@ -1318,6 +1510,26 @@ function ManagerReports({ notify }: { notify: any }) {
                                                         report.promoter_name
                                                     }
                                                 </b>
+
+                                                {/* 新增推广员ID */}
+
+                                                <small
+                                                    style={{
+                                                        display:
+                                                            'block',
+                                                        marginTop:
+                                                            3,
+                                                        color:
+                                                            '#315efb',
+                                                        fontWeight:
+                                                            700,
+                                                    }}
+                                                >
+                                                    ID{' '}
+                                                    {
+                                                        report.promoter_id
+                                                    }
+                                                </small>
 
                                                 <span>
                                                     {
@@ -1367,6 +1579,8 @@ function ManagerReports({ notify }: { notify: any }) {
                 </Panel>
             </div>
 
+            {/* 报告详情 */}
+
             {active && (
                 <div
                     className="drawer-backdrop"
@@ -1391,6 +1605,23 @@ function ManagerReports({ notify }: { notify: any }) {
                                         active.promoter_name
                                     }
                                 </h2>
+
+                                {/* 新增推广员ID */}
+
+                                <div
+                                    style={{
+                                        marginTop: 5,
+                                        color:
+                                            '#315efb',
+                                        fontWeight:
+                                            700,
+                                    }}
+                                >
+                                    推广员ID：{' '}
+                                    {
+                                        active.promoter_id
+                                    }
+                                </div>
                             </div>
 
                             <button
@@ -1406,6 +1637,20 @@ function ManagerReports({ notify }: { notify: any }) {
                         </div>
 
                         <dl className="detail-grid">
+                            {/* 新增推广员ID */}
+
+                            <div>
+                                <dt>
+                                    推广员ID
+                                </dt>
+
+                                <dd>
+                                    {
+                                        active.promoter_id
+                                    }
+                                </dd>
+                            </div>
+
                             <div>
                                 <dt>
                                     质检员
