@@ -161,7 +161,7 @@ function ManagerReports({ notify }: { notify: any }) {
     const [promoters, setPromoters] = useState<Promoter[]>([]);
 
     const [selectedInspector, setSelectedInspector] = useState('');
-    const [selectedPromoter, setSelectedPromoter] = useState('');
+    const [promoterSearch, setPromoterSearch] = useState('');
 
     const [review, setReview] =
         useState<ReviewStatus | 'all'>('pending_review');
@@ -172,16 +172,9 @@ function ManagerReports({ notify }: { notify: any }) {
     const [start, setStart] = useState(monthStart());
     const [end, setEnd] = useState(today());
 
-    // 批量审核
     const [selectedReports, setSelectedReports] = useState<string[]>([]);
     const [batchBusy, setBatchBusy] = useState(false);
-
-    // Excel 导出
     const [exportBusy, setExportBusy] = useState(false);
-
-    // =====================================================
-    // 加载报告
-    // =====================================================
 
     const load = async () => {
         let query = supabase
@@ -194,7 +187,10 @@ function ManagerReports({ notify }: { notify: any }) {
             });
 
         if (review !== 'all') {
-            query = query.eq('review_status', review);
+            query = query.eq(
+                'review_status',
+                review,
+            );
         }
 
         const { data, error } = await query;
@@ -206,10 +202,6 @@ function ManagerReports({ notify }: { notify: any }) {
 
         setRows(data || []);
     };
-
-    // =====================================================
-    // 加载推广员
-    // =====================================================
 
     const loadPromoters = async () => {
         const { data, error } = await supabase
@@ -236,10 +228,6 @@ function ManagerReports({ notify }: { notify: any }) {
         void loadPromoters();
     }, []);
 
-    // =====================================================
-    // 质检员分组
-    // =====================================================
-
     const groups = useMemo(() => {
         const map = new Map<string, any>();
 
@@ -261,15 +249,24 @@ function ManagerReports({ notify }: { notify: any }) {
 
             group.total += 1;
 
-            if (report.review_status === 'pending_review') {
+            if (
+                report.review_status ===
+                'pending_review'
+            ) {
                 group.pending += 1;
             }
 
-            if (report.review_status === 'approved') {
+            if (
+                report.review_status ===
+                'approved'
+            ) {
                 group.approved += 1;
             }
 
-            if (report.review_status === 'changes_requested') {
+            if (
+                report.review_status ===
+                'changes_requested'
+            ) {
                 group.changes += 1;
             }
         }
@@ -277,24 +274,18 @@ function ManagerReports({ notify }: { notify: any }) {
         return [...map.values()];
     }, [rows]);
 
-    // =====================================================
-    // 当前质检员报告
-    // =====================================================
-
     const filtered = selectedInspector
         ? rows.filter(
               (report) =>
-                  report.inspector_id === selectedInspector,
+                  report.inspector_id ===
+                  selectedInspector,
           )
         : [];
 
-    // =====================================================
-    // 可批量审核报告
-    // =====================================================
-
     const selectableReports = filtered.filter(
         (report) =>
-            report.review_status === 'pending_review',
+            report.review_status ===
+            'pending_review',
     );
 
     const selectableIds = selectableReports.map(
@@ -307,38 +298,38 @@ function ManagerReports({ notify }: { notify: any }) {
             selectedReports.includes(id),
         );
 
-    const selectedCount = selectedReports.length;
+    const selectedCount =
+        selectedReports.length;
 
-    const selectedSatisfiedCount = filtered.filter(
-        (report) =>
-            selectedReports.includes(report.id) &&
-            report.rating === 'satisfied' &&
-            report.review_status === 'pending_review',
-    ).length;
+    const selectedSatisfiedCount =
+        filtered.filter(
+            (report) =>
+                selectedReports.includes(
+                    report.id,
+                ) &&
+                report.rating ===
+                    'satisfied' &&
+                report.review_status ===
+                    'pending_review',
+        ).length;
 
-    const pendingSatisfiedReports = filtered.filter(
-        (report) =>
-            report.rating === 'satisfied' &&
-            report.review_status === 'pending_review',
-    );
+    const pendingSatisfiedReports =
+        filtered.filter(
+            (report) =>
+                report.rating ===
+                    'satisfied' &&
+                report.review_status ===
+                    'pending_review',
+        );
 
-    // =====================================================
-    // 选择质检员
-    // =====================================================
-
-    const chooseInspector = (inspectorId: string) => {
+    const chooseInspector = (
+        inspectorId: string,
+    ) => {
         setSelectedInspector(inspectorId);
-
         setSelectedReports([]);
-
         setActive(null);
-
         setNote('');
     };
-
-    // =====================================================
-    // 单选报告
-    // =====================================================
 
     const toggleReport = (
         reportId: string,
@@ -346,55 +337,57 @@ function ManagerReports({ notify }: { notify: any }) {
     ) => {
         setSelectedReports((current) => {
             if (checked) {
-                return current.includes(reportId)
+                return current.includes(
+                    reportId,
+                )
                     ? current
-                    : [...current, reportId];
+                    : [
+                          ...current,
+                          reportId,
+                      ];
             }
 
             return current.filter(
-                (id) => id !== reportId,
+                (id) =>
+                    id !== reportId,
             );
         });
     };
 
-    // =====================================================
-    // 全选
-    // =====================================================
-
-    const toggleAll = (checked: boolean) => {
+    const toggleAll = (
+        checked: boolean,
+    ) => {
         if (checked) {
-            setSelectedReports(selectableIds);
+            setSelectedReports(
+                selectableIds,
+            );
         } else {
             setSelectedReports([]);
         }
     };
-
-    // =====================================================
-    // 单份报告审核 RPC
-    // =====================================================
 
     const reviewOneReport = async (
         reportId: string,
         status: ReviewStatus,
         managerNote = '',
     ) => {
-        const { error } = await supabase.rpc(
-            'review_inspection_report',
-            {
-                p_report_id: reportId,
-                p_review_status: status,
-                p_manager_note: managerNote,
-            },
-        );
+        const { error } =
+            await supabase.rpc(
+                'review_inspection_report',
+                {
+                    p_report_id:
+                        reportId,
+                    p_review_status:
+                        status,
+                    p_manager_note:
+                        managerNote,
+                },
+            );
 
         if (error) {
             throw error;
         }
     };
-
-    // =====================================================
-    // 单份审核
-    // =====================================================
 
     const decide = async (
         status: ReviewStatus,
@@ -417,132 +410,134 @@ function ManagerReports({ notify }: { notify: any }) {
             );
 
             setActive(null);
-
             setNote('');
 
-            setSelectedReports((current) =>
-                current.filter(
-                    (id) => id !== active.id,
-                ),
+            setSelectedReports(
+                (current) =>
+                    current.filter(
+                        (id) =>
+                            id !==
+                            active.id,
+                    ),
             );
 
             await load();
         } catch (error: any) {
             notify(
-                error?.message || '审核失败',
+                error?.message ||
+                    '审核失败',
                 'error',
             );
         }
     };
 
-    // =====================================================
-    // 批量审核共用
-    // =====================================================
-
-    const approveReportIds = async (
-        reportIds: string[],
-        successMessage: string,
-    ) => {
-        if (reportIds.length === 0) {
-            notify(
-                '没有可以审核的报告',
-                'error',
-            );
-
-            return;
-        }
-
-        const confirmed = window.confirm(
-            `确定一次审核通过 ${reportIds.length} 份报告吗？`,
-        );
-
-        if (!confirmed) {
-            return;
-        }
-
-        setBatchBusy(true);
-
-        let successCount = 0;
-        let failedCount = 0;
-        let firstError = '';
-
-        for (const reportId of reportIds) {
-            try {
-                await reviewOneReport(
-                    reportId,
-                    'approved',
-                    '经理批量审核通过',
+    const approveReportIds =
+        async (
+            reportIds: string[],
+            successMessage: string,
+        ) => {
+            if (
+                reportIds.length === 0
+            ) {
+                notify(
+                    '没有可以审核的报告',
+                    'error',
                 );
 
-                successCount += 1;
-            } catch (error: any) {
-                failedCount += 1;
+                return;
+            }
 
-                if (!firstError) {
-                    firstError =
-                        error?.message ||
-                        '未知错误';
+            const confirmed =
+                window.confirm(
+                    `确定一次审核通过 ${reportIds.length} 份报告吗？`,
+                );
+
+            if (!confirmed) {
+                return;
+            }
+
+            setBatchBusy(true);
+
+            let successCount = 0;
+            let failedCount = 0;
+            let firstError = '';
+
+            for (const reportId of reportIds) {
+                try {
+                    await reviewOneReport(
+                        reportId,
+                        'approved',
+                        '经理批量审核通过',
+                    );
+
+                    successCount += 1;
+                } catch (
+                    error: any
+                ) {
+                    failedCount += 1;
+
+                    if (
+                        !firstError
+                    ) {
+                        firstError =
+                            error?.message ||
+                            '未知错误';
+                    }
                 }
             }
-        }
 
-        setBatchBusy(false);
+            setBatchBusy(false);
+            setSelectedReports([]);
+            setActive(null);
+            setNote('');
 
-        setSelectedReports([]);
+            await load();
 
-        setActive(null);
+            if (
+                failedCount > 0
+            ) {
+                notify(
+                    `成功 ${successCount} 份，失败 ${failedCount} 份。${firstError}`,
+                    'error',
+                );
 
-        setNote('');
+                return;
+            }
 
-        await load();
-
-        if (failedCount > 0) {
             notify(
-                `成功 ${successCount} 份，失败 ${failedCount} 份。${firstError}`,
-                'error',
+                `${successMessage}：${successCount} 份`,
             );
+        };
 
-            return;
-        }
+    const approveSelected =
+        async () => {
+            const validSelectedIds =
+                filtered
+                    .filter(
+                        (report) =>
+                            selectedReports.includes(
+                                report.id,
+                            ) &&
+                            report.review_status ===
+                                'pending_review',
+                    )
+                    .map(
+                        (report) =>
+                            report.id,
+                    );
 
-        notify(
-            `${successMessage}：${successCount} 份`,
-        );
-    };
-
-    // =====================================================
-    // 通过已选
-    // =====================================================
-
-    const approveSelected = async () => {
-        const validSelectedIds = filtered
-            .filter(
-                (report) =>
-                    selectedReports.includes(
-                        report.id,
-                    ) &&
-                    report.review_status ===
-                        'pending_review',
-            )
-            .map(
-                (report) => report.id,
+            await approveReportIds(
+                validSelectedIds,
+                '批量审核完成',
             );
-
-        await approveReportIds(
-            validSelectedIds,
-            '批量审核完成',
-        );
-    };
-
-    // =====================================================
-    // 一键通过全部满意
-    // =====================================================
+        };
 
     const approveAllSatisfied =
         async () => {
             const satisfiedIds =
                 pendingSatisfiedReports.map(
-                    (report) => report.id,
+                    (report) =>
+                        report.id,
                 );
 
             await approveReportIds(
@@ -551,419 +546,440 @@ function ManagerReports({ notify }: { notify: any }) {
             );
         };
 
-    // =====================================================
-    // 打开报告
-    // =====================================================
-
     const openReport = (
         report: any,
     ) => {
         setActive(report);
 
         setNote(
-            report.manager_note || '',
+            report.manager_note ||
+                '',
         );
     };
 
-    // =====================================================
-    // Excel 导出
-    //
-    // 支持：
-    // 1 全部推广员 + 日期范围
-    // 2 指定推广员 + 日期范围
-    //
-    // 注意：
-    // 导出不受当前“待审核/已审核”标签影响
-    // 会导出日期范围内所有审核状态
-    // =====================================================
-
-    const exportExcel = async () => {
-        if (!start || !end) {
-            notify(
-                '请选择开始和结束日期',
-                'error',
-            );
-
-            return;
-        }
-
-        if (start > end) {
-            notify(
-                '开始日期不能晚于结束日期',
-                'error',
-            );
-
-            return;
-        }
-
-        setExportBusy(true);
-
-        try {
-            let query = supabase
-                .from('report_details')
-                .select('*')
-                .gte('task_date', start)
-                .lte('task_date', end)
-                .order('task_date', {
-                    ascending: true,
-                });
-
-            // 指定推广员
-            if (selectedPromoter) {
-                query = query.eq(
-                    'promoter_id',
-                    selectedPromoter,
-                );
-            }
-
-            const {
-                data,
-                error,
-            } = await query;
-
-            if (error) {
-                throw error;
-            }
-
-            const reportRows =
-                data || [];
-
-            if (
-                reportRows.length === 0
-            ) {
+    const exportExcel =
+        async () => {
+            if (!start || !end) {
                 notify(
-                    '当前条件下没有质检报告',
+                    '请选择开始和结束日期',
                     'error',
                 );
 
                 return;
             }
 
-            // =================================================
-            // Excel 数据
-            // =================================================
-
-            const exportRows =
-                reportRows.map(
-                    (
-                        report: any,
-                        index: number,
-                    ) => ({
-                        '序号':
-                            index + 1,
-
-                        '质检日期':
-                            report.task_date,
-
-                        '推广员ID':
-                            report.promoter_id,
-
-                        '推广员昵称':
-                            report.promoter_name,
-
-                        '质检员ID':
-                            report.inspector_id,
-
-                        '质检员昵称':
-                            report.inspector_name,
-
-                        '质检号码':
-                            report.inspector_phone,
-
-                        '推广员状态':
-                            report.promoter_status,
-
-                        '评价':
-                            report.rating ===
-                            'satisfied'
-                                ? '满意'
-                                : report.rating ===
-                                    'neutral'
-                                  ? '一般'
-                                  : '不满意',
-
-                        '评价原因':
-                            Array.isArray(
-                                report.reasons,
-                            )
-                                ? report.reasons.join(
-                                      '；',
-                                  )
-                                : '',
-
-                        '其他状态说明':
-                            report.other_status_note ||
-                            '',
-
-                        '其他原因说明':
-                            report.other_reason_note ||
-                            '',
-
-                        '质检总结':
-                            report.summary ||
-                            '',
-
-                        '证据链接':
-                            report.evidence_url ||
-                            '',
-
-                        '需要经理跟进':
-                            report.requires_follow_up
-                                ? '是'
-                                : '否',
-
-                        '审核状态':
-                            report.review_status ===
-                            'approved'
-                                ? '审核通过'
-                                : report.review_status ===
-                                    'changes_requested'
-                                  ? '需要修改'
-                                  : '待审核',
-
-                        '经理备注':
-                            report.manager_note ||
-                            '',
-
-                        '提交时间':
-                            report.submitted_at
-                                ? new Date(
-                                      report.submitted_at,
-                                  ).toLocaleString(
-                                      'zh-CN',
-                                  )
-                                : '',
-
-                        '审核时间':
-                            report.reviewed_at
-                                ? new Date(
-                                      report.reviewed_at,
-                                  ).toLocaleString(
-                                      'zh-CN',
-                                  )
-                                : '',
-
-                        '审核人':
-                            report.reviewed_by ||
-                            '',
-                    }),
+            if (start > end) {
+                notify(
+                    '开始日期不能晚于结束日期',
+                    'error',
                 );
 
-            // =================================================
-            // 创建 Excel Sheet
-            // =================================================
+                return;
+            }
 
-            const worksheet =
-                XLSX.utils.json_to_sheet(
-                    exportRows,
-                );
+            setExportBusy(true);
 
-            // =================================================
-            // Excel 列宽
-            // =================================================
+            try {
+                let promoterId = '';
 
-            worksheet['!cols'] = [
-                { wch: 8 },
-                { wch: 14 },
-                { wch: 18 },
-                { wch: 20 },
-                { wch: 18 },
-                { wch: 20 },
-                { wch: 20 },
-                { wch: 24 },
-                { wch: 12 },
-                { wch: 45 },
-                { wch: 35 },
-                { wch: 35 },
-                { wch: 65 },
-                { wch: 65 },
-                { wch: 18 },
-                { wch: 18 },
-                { wch: 45 },
-                { wch: 24 },
-                { wch: 24 },
-                { wch: 18 },
-            ];
+                const keyword =
+                    promoterSearch
+                        .trim()
+                        .toLowerCase();
 
-            // =================================================
-            // 自动筛选
-            // =================================================
+                if (keyword) {
+                    const matched =
+                        promoters.find(
+                            (promoter) =>
+                                promoter.id
+                                    .toLowerCase() ===
+                                    keyword ||
+                                promoter.nickname
+                                    .toLowerCase() ===
+                                    keyword,
+                        );
 
-            const range =
-                XLSX.utils.decode_range(
-                    worksheet['!ref'] ||
-                        'A1:A1',
-                );
+                    if (!matched) {
+                        notify(
+                            '找不到这个推广员ID或昵称',
+                            'error',
+                        );
 
-            worksheet['!autofilter'] = {
-                ref: XLSX.utils.encode_range(
-                    {
-                        s: {
-                            r: 0,
-                            c: 0,
+                        return;
+                    }
+
+                    promoterId =
+                        matched.id;
+                }
+
+                let query =
+                    supabase
+                        .from(
+                            'report_details',
+                        )
+                        .select('*')
+                        .gte(
+                            'task_date',
+                            start,
+                        )
+                        .lte(
+                            'task_date',
+                            end,
+                        )
+                        .order(
+                            'task_date',
+                            {
+                                ascending:
+                                    true,
+                            },
+                        );
+
+                if (promoterId) {
+                    query =
+                        query.eq(
+                            'promoter_id',
+                            promoterId,
+                        );
+                }
+
+                const {
+                    data,
+                    error,
+                } = await query;
+
+                if (error) {
+                    throw error;
+                }
+
+                const reportRows =
+                    data || [];
+
+                if (
+                    reportRows.length ===
+                    0
+                ) {
+                    notify(
+                        '当前条件下没有质检报告',
+                        'error',
+                    );
+
+                    return;
+                }
+
+                const exportRows =
+                    reportRows.map(
+                        (
+                            report: any,
+                            index: number,
+                        ) => ({
+                            '序号':
+                                index +
+                                1,
+
+                            '质检日期':
+                                report.task_date,
+
+                            '推广员ID':
+                                report.promoter_id,
+
+                            '推广员昵称':
+                                report.promoter_name,
+
+                            '质检员ID':
+                                report.inspector_id,
+
+                            '质检员昵称':
+                                report.inspector_name,
+
+                            '质检号码':
+                                report.inspector_phone,
+
+                            '推广员状态':
+                                report.promoter_status,
+
+                            '评价':
+                                report.rating ===
+                                'satisfied'
+                                    ? '满意'
+                                    : report.rating ===
+                                        'neutral'
+                                      ? '一般'
+                                      : '不满意',
+
+                            '评价原因':
+                                Array.isArray(
+                                    report.reasons,
+                                )
+                                    ? report.reasons.join(
+                                          '；',
+                                      )
+                                    : '',
+
+                            '其他状态说明':
+                                report.other_status_note ||
+                                '',
+
+                            '其他原因说明':
+                                report.other_reason_note ||
+                                '',
+
+                            '质检总结':
+                                report.summary ||
+                                '',
+
+                            '证据链接':
+                                report.evidence_url ||
+                                '',
+
+                            '需要经理跟进':
+                                report.requires_follow_up
+                                    ? '是'
+                                    : '否',
+
+                            '审核状态':
+                                report.review_status ===
+                                'approved'
+                                    ? '审核通过'
+                                    : report.review_status ===
+                                        'changes_requested'
+                                      ? '需要修改'
+                                      : '待审核',
+
+                            '经理备注':
+                                report.manager_note ||
+                                '',
+
+                            '提交时间':
+                                report.submitted_at
+                                    ? new Date(
+                                          report.submitted_at,
+                                      ).toLocaleString(
+                                          'zh-CN',
+                                      )
+                                    : '',
+
+                            '审核时间':
+                                report.reviewed_at
+                                    ? new Date(
+                                          report.reviewed_at,
+                                      ).toLocaleString(
+                                          'zh-CN',
+                                      )
+                                    : '',
+
+                            '审核人':
+                                report.reviewed_by ||
+                                '',
+                        }),
+                    );
+
+                const worksheet =
+                    XLSX.utils.json_to_sheet(
+                        exportRows,
+                    );
+
+                worksheet['!cols'] =
+                    [
+                        { wch: 8 },
+                        { wch: 14 },
+                        { wch: 18 },
+                        { wch: 20 },
+                        { wch: 18 },
+                        { wch: 20 },
+                        { wch: 20 },
+                        { wch: 24 },
+                        { wch: 12 },
+                        { wch: 45 },
+                        { wch: 35 },
+                        { wch: 35 },
+                        { wch: 65 },
+                        { wch: 65 },
+                        { wch: 18 },
+                        { wch: 18 },
+                        { wch: 45 },
+                        { wch: 24 },
+                        { wch: 24 },
+                        { wch: 18 },
+                    ];
+
+                const range =
+                    XLSX.utils.decode_range(
+                        worksheet[
+                            '!ref'
+                        ] ||
+                            'A1:A1',
+                    );
+
+                worksheet[
+                    '!autofilter'
+                ] = {
+                    ref: XLSX.utils.encode_range(
+                        {
+                            s: {
+                                r: 0,
+                                c: 0,
+                            },
+
+                            e: {
+                                r: range
+                                    .e.r,
+                                c: range
+                                    .e.c,
+                            },
                         },
+                    ),
+                };
 
-                        e: {
-                            r: range.e.r,
-                            c: range.e.c,
-                        },
-                    },
-                ),
-            };
+                const workbook =
+                    XLSX.utils.book_new();
 
-            // =================================================
-            // Workbook
-            // =================================================
-
-            const workbook =
-                XLSX.utils.book_new();
-
-            XLSX.utils.book_append_sheet(
-                workbook,
-                worksheet,
-                '质检报告',
-            );
-
-            // =================================================
-            // 文件名
-            // =================================================
-
-            const promoter =
-                promoters.find(
-                    (item) =>
-                        item.id ===
-                        selectedPromoter,
+                XLSX.utils.book_append_sheet(
+                    workbook,
+                    worksheet,
+                    '质检报告',
                 );
 
-            const safePromoterName =
-                promoter
-                    ? `${promoter.nickname}_${promoter.id}`
-                    : '全部推广员';
+                let fileLabel =
+                    '全部推广员';
 
-            const safeFileName =
-                safePromoterName.replace(
-                    /[\\/:*?"<>|]/g,
-                    '_',
+                if (promoterId) {
+                    const matched =
+                        promoters.find(
+                            (promoter) =>
+                                promoter.id ===
+                                promoterId,
+                        );
+
+                    if (matched) {
+                        fileLabel =
+                            `${matched.nickname}_${matched.id}`;
+                    }
+                }
+
+                const safeFileLabel =
+                    fileLabel.replace(
+                        /[\\/:*?"<>|]/g,
+                        '_',
+                    );
+
+                const fileName =
+                    `质检报告_${safeFileLabel}_${start}_${end}.xlsx`;
+
+                XLSX.writeFile(
+                    workbook,
+                    fileName,
                 );
 
-            const fileName =
-                `质检报告_${safeFileName}_${start}_${end}.xlsx`;
-
-            XLSX.writeFile(
-                workbook,
-                fileName,
-            );
-
-            notify(
-                `已导出 ${reportRows.length} 份质检报告`,
-            );
-        } catch (error: any) {
-            notify(
-                error?.message ||
-                    'Excel 导出失败',
-                'error',
-            );
-        } finally {
-            setExportBusy(false);
-        }
-    };
-
-    // =====================================================
-    // 页面
-    // =====================================================
+                notify(
+                    `已导出 ${reportRows.length} 份质检报告`,
+                );
+            } catch (
+                error: any
+            ) {
+                notify(
+                    error?.message ||
+                        'Excel 导出失败',
+                    'error',
+                );
+            } finally {
+                setExportBusy(false);
+            }
+        };
 
     return (
         <>
             <PageHead
                 title="报告中心"
-                text="按日期和推广员导出 Excel；满意报告可以批量通过，一般和不满意报告建议人工检查。"
+                text="选择日期范围，可输入推广员ID或昵称导出指定推广员报告，留空则导出全部"
             >
                 <div
-                    className="range-inline"
                     style={{
-                        flexWrap: 'wrap',
+                        display: 'grid',
+                        gap: 10,
+                        minWidth: 320,
                     }}
                 >
-                    <input
-                        type="date"
-                        value={start}
-                        onChange={(event) =>
-                            setStart(
-                                event.target.value,
-                            )
-                        }
-                    />
+                    <div className="range-inline">
+                        <input
+                            type="date"
+                            value={start}
+                            onChange={(
+                                event,
+                            ) =>
+                                setStart(
+                                    event
+                                        .target
+                                        .value,
+                                )
+                            }
+                        />
 
-                    <span>至</span>
+                        <span>至</span>
 
-                    <input
-                        type="date"
-                        value={end}
-                        onChange={(event) =>
-                            setEnd(
-                                event.target.value,
-                            )
-                        }
-                    />
+                        <input
+                            type="date"
+                            value={end}
+                            onChange={(
+                                event,
+                            ) =>
+                                setEnd(
+                                    event
+                                        .target
+                                        .value,
+                                )
+                            }
+                        />
+                    </div>
 
-                    <select
-                        value={
-                            selectedPromoter
-                        }
-                        onChange={(event) =>
-                            setSelectedPromoter(
-                                event.target.value,
-                            )
-                        }
+                    <div
                         style={{
-                            minWidth: 220,
+                            display:
+                                'flex',
+                            gap: 10,
+                            flexWrap:
+                                'wrap',
                         }}
                     >
-                        <option value="">
-                            全部推广员
-                        </option>
+                        <input
+                            type="text"
+                            value={
+                                promoterSearch
+                            }
+                            onChange={(
+                                event,
+                            ) =>
+                                setPromoterSearch(
+                                    event
+                                        .target
+                                        .value,
+                                )
+                            }
+                            placeholder="推广员ID / 昵称，留空导出全部"
+                            style={{
+                                minWidth:
+                                    260,
+                                flex: 1,
+                            }}
+                        />
 
-                        {promoters.map(
-                            (promoter) => (
-                                <option
-                                    key={
-                                        promoter.id
-                                    }
-                                    value={
-                                        promoter.id
-                                    }
-                                >
-                                    {
-                                        promoter.nickname
-                                    }{' '}
-                                    ·{' '}
-                                    {promoter.id}
-                                </option>
-                            ),
-                        )}
-                    </select>
+                        <button
+                            className="btn secondary"
+                            onClick={
+                                exportExcel
+                            }
+                            disabled={
+                                exportBusy
+                            }
+                        >
+                            <Download />
 
-                    <button
-                        className="btn secondary"
-                        onClick={
-                            exportExcel
-                        }
-                        disabled={
-                            exportBusy
-                        }
-                    >
-                        <Download />
-
-                        {exportBusy
-                            ? '正在导出…'
-                            : '导出 Excel'}
-                    </button>
+                            {exportBusy
+                                ? '正在导出…'
+                                : '导出 Excel'}
+                        </button>
+                    </div>
                 </div>
             </PageHead>
-
-            {/* ============================================= */}
-            {/* 审核状态 Tabs */}
-            {/* ============================================= */}
 
             <div className="review-tabs">
                 {(
@@ -976,7 +992,9 @@ function ManagerReports({ notify }: { notify: any }) {
                 ).map(
                     (status) => (
                         <button
-                            key={status}
+                            key={
+                                status
+                            }
                             className={
                                 review ===
                                 status
@@ -1004,10 +1022,6 @@ function ManagerReports({ notify }: { notify: any }) {
                 )}
             </div>
 
-            {/* ============================================= */}
-            {/* 批量审核操作区 */}
-            {/* ============================================= */}
-
             {selectedInspector && (
                 <section
                     style={{
@@ -1024,13 +1038,16 @@ function ManagerReports({ notify }: { notify: any }) {
                         justifyContent:
                             'space-between',
                         gap: 16,
-                        flexWrap: 'wrap',
+                        flexWrap:
+                            'wrap',
                     }}
                 >
                     <div>
                         <b>
                             已选择{' '}
-                            {selectedCount}{' '}
+                            {
+                                selectedCount
+                            }{' '}
                             份报告
                         </b>
 
@@ -1147,10 +1164,6 @@ function ManagerReports({ notify }: { notify: any }) {
                     </div>
                 </section>
             )}
-
-            {/* ============================================= */}
-            {/* 左右报告布局 */}
-            {/* ============================================= */}
 
             <div className="review-layout">
                 <Panel title="按质检员查看审核进度">
@@ -1353,10 +1366,6 @@ function ManagerReports({ notify }: { notify: any }) {
                     </div>
                 </Panel>
             </div>
-
-            {/* ============================================= */}
-            {/* 报告审核 Drawer */}
-            {/* ============================================= */}
 
             {active && (
                 <div
