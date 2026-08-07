@@ -2,6 +2,7 @@ import {useEffect,useMemo,useState} from 'react';
 import {AlertTriangle,Archive,BarChart3,CalendarDays,Check,ChevronRight,ClipboardCheck,Download,ExternalLink,FileText,Filter,Gauge,Globe2,LayoutDashboard,LogIn,LogOut,Menu,RefreshCw,Search,Settings,ShieldCheck,Sparkles,Upload,UserCog,Users,X} from 'lucide-react';
 import {configured,supabase,userEmail} from './lib/supabase';
 import {download,parseCsv,toCsv} from './lib/csv';
+import * as XLSX from 'xlsx';
 import type {Inspector,Leaderboard,Profile,Promoter,Report,ReviewStatus,Role,Task,TaskStatus} from './types';
 
 type Page='dashboard'|'promoters'|'inspectors'|'allocation'|'tasks'|'reports'|'settlement'|'leaderboard'|'reputation'|'accounts'|'settings';
@@ -157,18 +158,30 @@ function InspectorReports({profile,notify}:{profile:Profile;notify:any}){const [
 <Question n="8" pt="Resumo da inspeção" zh="质检总结"><textarea rows={5} value={summary} onChange={e=>setSummary(e.target.value)}/></Question><label className="switch-line"><input type="checkbox" checked={follow} onChange={e=>setFollow(e.target.checked)}/>需要经理跟进</label><button className="btn primary wide" onClick={save}><Check/>提交评价</button></Panel></div></>}
 function ManagerReports({ notify }: { notify: any }) {
     const [rows, setRows] = useState<any[]>([]);
+    const [promoters, setPromoters] = useState<Promoter[]>([]);
+
     const [selectedInspector, setSelectedInspector] = useState('');
-    const [review, setReview] = useState<ReviewStatus | 'all'>('pending_review');
+    const [selectedPromoter, setSelectedPromoter] = useState('');
+
+    const [review, setReview] =
+        useState<ReviewStatus | 'all'>('pending_review');
+
     const [active, setActive] = useState<any | null>(null);
     const [note, setNote] = useState('');
+
     const [start, setStart] = useState(monthStart());
     const [end, setEnd] = useState(today());
 
-    // 批量审核所选择的报告 ID
+    // 批量审核
     const [selectedReports, setSelectedReports] = useState<string[]>([]);
-
-    // 防止批量审核时重复点击
     const [batchBusy, setBatchBusy] = useState(false);
+
+    // Excel 导出
+    const [exportBusy, setExportBusy] = useState(false);
+
+    // =====================================================
+    // 加载报告
+    // =====================================================
 
     const load = async () => {
         let query = supabase
@@ -176,7 +189,9 @@ function ManagerReports({ notify }: { notify: any }) {
             .select('*')
             .gte('task_date', start)
             .lte('task_date', end)
-            .order('submitted_at', { ascending: false });
+            .order('submitted_at', {
+                ascending: false,
+            });
 
         if (review !== 'all') {
             query = query.eq('review_status', review);
@@ -192,11 +207,38 @@ function ManagerReports({ notify }: { notify: any }) {
         setRows(data || []);
     };
 
+    // =====================================================
+    // 加载推广员
+    // =====================================================
+
+    const loadPromoters = async () => {
+        const { data, error } = await supabase
+            .from('promoters')
+            .select('*')
+            .order('nickname');
+
+        if (error) {
+            notify(error.message, 'error');
+            return;
+        }
+
+        setPromoters((data || []) as Promoter[]);
+    };
+
     useEffect(() => {
         void load();
+
         setSelectedReports([]);
         setSelectedInspector('');
     }, [start, end, review]);
+
+    useEffect(() => {
+        void loadPromoters();
+    }, []);
+
+    // =====================================================
+    // 质检员分组
+    // =====================================================
 
     const groups = useMemo(() => {
         const map = new Map<string, any>();
@@ -235,20 +277,35 @@ function ManagerReports({ notify }: { notify: any }) {
         return [...map.values()];
     }, [rows]);
 
+    // =====================================================
+    // 当前质检员报告
+    // =====================================================
+
     const filtered = selectedInspector
-        ? rows.filter((report) => report.inspector_id === selectedInspector)
+        ? rows.filter(
+              (report) =>
+                  report.inspector_id === selectedInspector,
+          )
         : [];
 
-    // 当前列表中可以被批量审核的报告
+    // =====================================================
+    // 可批量审核报告
+    // =====================================================
+
     const selectableReports = filtered.filter(
-        (report) => report.review_status === 'pending_review',
+        (report) =>
+            report.review_status === 'pending_review',
     );
 
-    const selectableIds = selectableReports.map((report) => report.id);
+    const selectableIds = selectableReports.map(
+        (report) => report.id,
+    );
 
     const allSelectableChecked =
         selectableIds.length > 0 &&
-        selectableIds.every((id) => selectedReports.includes(id));
+        selectableIds.every((id) =>
+            selectedReports.includes(id),
+        );
 
     const selectedCount = selectedReports.length;
 
@@ -265,14 +322,28 @@ function ManagerReports({ notify }: { notify: any }) {
             report.review_status === 'pending_review',
     );
 
+    // =====================================================
+    // 选择质检员
+    // =====================================================
+
     const chooseInspector = (inspectorId: string) => {
         setSelectedInspector(inspectorId);
+
         setSelectedReports([]);
+
         setActive(null);
+
         setNote('');
     };
 
-    const toggleReport = (reportId: string, checked: boolean) => {
+    // =====================================================
+    // 单选报告
+    // =====================================================
+
+    const toggleReport = (
+        reportId: string,
+        checked: boolean,
+    ) => {
         setSelectedReports((current) => {
             if (checked) {
                 return current.includes(reportId)
@@ -280,9 +351,15 @@ function ManagerReports({ notify }: { notify: any }) {
                     : [...current, reportId];
             }
 
-            return current.filter((id) => id !== reportId);
+            return current.filter(
+                (id) => id !== reportId,
+            );
         });
     };
+
+    // =====================================================
+    // 全选
+    // =====================================================
 
     const toggleAll = (checked: boolean) => {
         if (checked) {
@@ -292,50 +369,86 @@ function ManagerReports({ notify }: { notify: any }) {
         }
     };
 
+    // =====================================================
+    // 单份报告审核 RPC
+    // =====================================================
+
     const reviewOneReport = async (
         reportId: string,
         status: ReviewStatus,
         managerNote = '',
     ) => {
-        const { error } = await supabase.rpc('review_inspection_report', {
-            p_report_id: reportId,
-            p_review_status: status,
-            p_manager_note: managerNote,
-        });
+        const { error } = await supabase.rpc(
+            'review_inspection_report',
+            {
+                p_report_id: reportId,
+                p_review_status: status,
+                p_manager_note: managerNote,
+            },
+        );
 
         if (error) {
             throw error;
         }
     };
 
-    const decide = async (status: ReviewStatus) => {
+    // =====================================================
+    // 单份审核
+    // =====================================================
+
+    const decide = async (
+        status: ReviewStatus,
+    ) => {
         if (!active) {
             return;
         }
 
         try {
-            await reviewOneReport(active.id, status, note);
+            await reviewOneReport(
+                active.id,
+                status,
+                note,
+            );
 
-            notify(status === 'approved' ? '审核通过' : '已退回修改');
+            notify(
+                status === 'approved'
+                    ? '审核通过'
+                    : '已退回修改',
+            );
 
             setActive(null);
+
             setNote('');
+
             setSelectedReports((current) =>
-                current.filter((id) => id !== active.id),
+                current.filter(
+                    (id) => id !== active.id,
+                ),
             );
 
             await load();
         } catch (error: any) {
-            notify(error?.message || '审核失败', 'error');
+            notify(
+                error?.message || '审核失败',
+                'error',
+            );
         }
     };
+
+    // =====================================================
+    // 批量审核共用
+    // =====================================================
 
     const approveReportIds = async (
         reportIds: string[],
         successMessage: string,
     ) => {
         if (reportIds.length === 0) {
-            notify('没有可以审核的报告', 'error');
+            notify(
+                '没有可以审核的报告',
+                'error',
+            );
+
             return;
         }
 
@@ -366,14 +479,19 @@ function ManagerReports({ notify }: { notify: any }) {
                 failedCount += 1;
 
                 if (!firstError) {
-                    firstError = error?.message || '未知错误';
+                    firstError =
+                        error?.message ||
+                        '未知错误';
                 }
             }
         }
 
         setBatchBusy(false);
+
         setSelectedReports([]);
+
         setActive(null);
+
         setNote('');
 
         await load();
@@ -383,51 +501,397 @@ function ManagerReports({ notify }: { notify: any }) {
                 `成功 ${successCount} 份，失败 ${failedCount} 份。${firstError}`,
                 'error',
             );
+
             return;
         }
 
-        notify(`${successMessage}：${successCount} 份`);
+        notify(
+            `${successMessage}：${successCount} 份`,
+        );
     };
+
+    // =====================================================
+    // 通过已选
+    // =====================================================
 
     const approveSelected = async () => {
         const validSelectedIds = filtered
             .filter(
                 (report) =>
-                    selectedReports.includes(report.id) &&
-                    report.review_status === 'pending_review',
+                    selectedReports.includes(
+                        report.id,
+                    ) &&
+                    report.review_status ===
+                        'pending_review',
             )
-            .map((report) => report.id);
-
-        await approveReportIds(validSelectedIds, '批量审核完成');
-    };
-
-    const approveAllSatisfied = async () => {
-        const satisfiedIds = pendingSatisfiedReports.map(
-            (report) => report.id,
-        );
+            .map(
+                (report) => report.id,
+            );
 
         await approveReportIds(
-            satisfiedIds,
-            '满意报告批量审核完成',
+            validSelectedIds,
+            '批量审核完成',
         );
     };
 
-    const openReport = (report: any) => {
+    // =====================================================
+    // 一键通过全部满意
+    // =====================================================
+
+    const approveAllSatisfied =
+        async () => {
+            const satisfiedIds =
+                pendingSatisfiedReports.map(
+                    (report) => report.id,
+                );
+
+            await approveReportIds(
+                satisfiedIds,
+                '满意报告批量审核完成',
+            );
+        };
+
+    // =====================================================
+    // 打开报告
+    // =====================================================
+
+    const openReport = (
+        report: any,
+    ) => {
         setActive(report);
-        setNote(report.manager_note || '');
+
+        setNote(
+            report.manager_note || '',
+        );
     };
+
+    // =====================================================
+    // Excel 导出
+    //
+    // 支持：
+    // 1 全部推广员 + 日期范围
+    // 2 指定推广员 + 日期范围
+    //
+    // 注意：
+    // 导出不受当前“待审核/已审核”标签影响
+    // 会导出日期范围内所有审核状态
+    // =====================================================
+
+    const exportExcel = async () => {
+        if (!start || !end) {
+            notify(
+                '请选择开始和结束日期',
+                'error',
+            );
+
+            return;
+        }
+
+        if (start > end) {
+            notify(
+                '开始日期不能晚于结束日期',
+                'error',
+            );
+
+            return;
+        }
+
+        setExportBusy(true);
+
+        try {
+            let query = supabase
+                .from('report_details')
+                .select('*')
+                .gte('task_date', start)
+                .lte('task_date', end)
+                .order('task_date', {
+                    ascending: true,
+                });
+
+            // 指定推广员
+            if (selectedPromoter) {
+                query = query.eq(
+                    'promoter_id',
+                    selectedPromoter,
+                );
+            }
+
+            const {
+                data,
+                error,
+            } = await query;
+
+            if (error) {
+                throw error;
+            }
+
+            const reportRows =
+                data || [];
+
+            if (
+                reportRows.length === 0
+            ) {
+                notify(
+                    '当前条件下没有质检报告',
+                    'error',
+                );
+
+                return;
+            }
+
+            // =================================================
+            // Excel 数据
+            // =================================================
+
+            const exportRows =
+                reportRows.map(
+                    (
+                        report: any,
+                        index: number,
+                    ) => ({
+                        '序号':
+                            index + 1,
+
+                        '质检日期':
+                            report.task_date,
+
+                        '推广员ID':
+                            report.promoter_id,
+
+                        '推广员昵称':
+                            report.promoter_name,
+
+                        '质检员ID':
+                            report.inspector_id,
+
+                        '质检员昵称':
+                            report.inspector_name,
+
+                        '质检号码':
+                            report.inspector_phone,
+
+                        '推广员状态':
+                            report.promoter_status,
+
+                        '评价':
+                            report.rating ===
+                            'satisfied'
+                                ? '满意'
+                                : report.rating ===
+                                    'neutral'
+                                  ? '一般'
+                                  : '不满意',
+
+                        '评价原因':
+                            Array.isArray(
+                                report.reasons,
+                            )
+                                ? report.reasons.join(
+                                      '；',
+                                  )
+                                : '',
+
+                        '其他状态说明':
+                            report.other_status_note ||
+                            '',
+
+                        '其他原因说明':
+                            report.other_reason_note ||
+                            '',
+
+                        '质检总结':
+                            report.summary ||
+                            '',
+
+                        '证据链接':
+                            report.evidence_url ||
+                            '',
+
+                        '需要经理跟进':
+                            report.requires_follow_up
+                                ? '是'
+                                : '否',
+
+                        '审核状态':
+                            report.review_status ===
+                            'approved'
+                                ? '审核通过'
+                                : report.review_status ===
+                                    'changes_requested'
+                                  ? '需要修改'
+                                  : '待审核',
+
+                        '经理备注':
+                            report.manager_note ||
+                            '',
+
+                        '提交时间':
+                            report.submitted_at
+                                ? new Date(
+                                      report.submitted_at,
+                                  ).toLocaleString(
+                                      'zh-CN',
+                                  )
+                                : '',
+
+                        '审核时间':
+                            report.reviewed_at
+                                ? new Date(
+                                      report.reviewed_at,
+                                  ).toLocaleString(
+                                      'zh-CN',
+                                  )
+                                : '',
+
+                        '审核人':
+                            report.reviewed_by ||
+                            '',
+                    }),
+                );
+
+            // =================================================
+            // 创建 Excel Sheet
+            // =================================================
+
+            const worksheet =
+                XLSX.utils.json_to_sheet(
+                    exportRows,
+                );
+
+            // =================================================
+            // Excel 列宽
+            // =================================================
+
+            worksheet['!cols'] = [
+                { wch: 8 },
+                { wch: 14 },
+                { wch: 18 },
+                { wch: 20 },
+                { wch: 18 },
+                { wch: 20 },
+                { wch: 20 },
+                { wch: 24 },
+                { wch: 12 },
+                { wch: 45 },
+                { wch: 35 },
+                { wch: 35 },
+                { wch: 65 },
+                { wch: 65 },
+                { wch: 18 },
+                { wch: 18 },
+                { wch: 45 },
+                { wch: 24 },
+                { wch: 24 },
+                { wch: 18 },
+            ];
+
+            // =================================================
+            // 自动筛选
+            // =================================================
+
+            const range =
+                XLSX.utils.decode_range(
+                    worksheet['!ref'] ||
+                        'A1:A1',
+                );
+
+            worksheet['!autofilter'] = {
+                ref: XLSX.utils.encode_range(
+                    {
+                        s: {
+                            r: 0,
+                            c: 0,
+                        },
+
+                        e: {
+                            r: range.e.r,
+                            c: range.e.c,
+                        },
+                    },
+                ),
+            };
+
+            // =================================================
+            // Workbook
+            // =================================================
+
+            const workbook =
+                XLSX.utils.book_new();
+
+            XLSX.utils.book_append_sheet(
+                workbook,
+                worksheet,
+                '质检报告',
+            );
+
+            // =================================================
+            // 文件名
+            // =================================================
+
+            const promoter =
+                promoters.find(
+                    (item) =>
+                        item.id ===
+                        selectedPromoter,
+                );
+
+            const safePromoterName =
+                promoter
+                    ? `${promoter.nickname}_${promoter.id}`
+                    : '全部推广员';
+
+            const safeFileName =
+                safePromoterName.replace(
+                    /[\\/:*?"<>|]/g,
+                    '_',
+                );
+
+            const fileName =
+                `质检报告_${safeFileName}_${start}_${end}.xlsx`;
+
+            XLSX.writeFile(
+                workbook,
+                fileName,
+            );
+
+            notify(
+                `已导出 ${reportRows.length} 份质检报告`,
+            );
+        } catch (error: any) {
+            notify(
+                error?.message ||
+                    'Excel 导出失败',
+                'error',
+            );
+        } finally {
+            setExportBusy(false);
+        }
+    };
+
+    // =====================================================
+    // 页面
+    // =====================================================
 
     return (
         <>
             <PageHead
                 title="报告中心"
-                text="先按质检员查看待审核数量；满意报告可以批量通过，一般和不满意报告建议人工检查。"
+                text="按日期和推广员导出 Excel；满意报告可以批量通过，一般和不满意报告建议人工检查。"
             >
-                <div className="range-inline">
+                <div
+                    className="range-inline"
+                    style={{
+                        flexWrap: 'wrap',
+                    }}
+                >
                     <input
                         type="date"
                         value={start}
-                        onChange={(event) => setStart(event.target.value)}
+                        onChange={(event) =>
+                            setStart(
+                                event.target.value,
+                            )
+                        }
                     />
 
                     <span>至</span>
@@ -435,10 +899,71 @@ function ManagerReports({ notify }: { notify: any }) {
                     <input
                         type="date"
                         value={end}
-                        onChange={(event) => setEnd(event.target.value)}
+                        onChange={(event) =>
+                            setEnd(
+                                event.target.value,
+                            )
+                        }
                     />
+
+                    <select
+                        value={
+                            selectedPromoter
+                        }
+                        onChange={(event) =>
+                            setSelectedPromoter(
+                                event.target.value,
+                            )
+                        }
+                        style={{
+                            minWidth: 220,
+                        }}
+                    >
+                        <option value="">
+                            全部推广员
+                        </option>
+
+                        {promoters.map(
+                            (promoter) => (
+                                <option
+                                    key={
+                                        promoter.id
+                                    }
+                                    value={
+                                        promoter.id
+                                    }
+                                >
+                                    {
+                                        promoter.nickname
+                                    }{' '}
+                                    ·{' '}
+                                    {promoter.id}
+                                </option>
+                            ),
+                        )}
+                    </select>
+
+                    <button
+                        className="btn secondary"
+                        onClick={
+                            exportExcel
+                        }
+                        disabled={
+                            exportBusy
+                        }
+                    >
+                        <Download />
+
+                        {exportBusy
+                            ? '正在导出…'
+                            : '导出 Excel'}
+                    </button>
                 </div>
             </PageHead>
+
+            {/* ============================================= */}
+            {/* 审核状态 Tabs */}
+            {/* ============================================= */}
 
             <div className="review-tabs">
                 {(
@@ -448,53 +973,83 @@ function ManagerReports({ notify }: { notify: any }) {
                         'changes_requested',
                         'all',
                     ] as const
-                ).map((status) => (
-                    <button
-                        key={status}
-                        className={review === status ? 'active' : ''}
-                        onClick={() => {
-                            setReview(status);
-                            setSelectedReports([]);
-                        }}
-                    >
-                        {status === 'all'
-                            ? '全部'
-                            : reviewLabel[status]}
-                    </button>
-                ))}
+                ).map(
+                    (status) => (
+                        <button
+                            key={status}
+                            className={
+                                review ===
+                                status
+                                    ? 'active'
+                                    : ''
+                            }
+                            onClick={() => {
+                                setReview(
+                                    status,
+                                );
+
+                                setSelectedReports(
+                                    [],
+                                );
+                            }}
+                        >
+                            {status ===
+                            'all'
+                                ? '全部'
+                                : reviewLabel[
+                                      status
+                                  ]}
+                        </button>
+                    ),
+                )}
             </div>
+
+            {/* ============================================= */}
+            {/* 批量审核操作区 */}
+            {/* ============================================= */}
 
             {selectedInspector && (
                 <section
                     style={{
                         marginBottom: 16,
                         padding: 16,
-                        border: '1px solid #dfe6ef',
+                        border:
+                            '1px solid #dfe6ef',
                         borderRadius: 16,
-                        background: '#ffffff',
+                        background:
+                            '#ffffff',
                         display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
+                        alignItems:
+                            'center',
+                        justifyContent:
+                            'space-between',
                         gap: 16,
                         flexWrap: 'wrap',
                     }}
                 >
                     <div>
                         <b>
-                            已选择 {selectedCount} 份报告
+                            已选择{' '}
+                            {selectedCount}{' '}
+                            份报告
                         </b>
 
                         <div
                             style={{
                                 marginTop: 4,
-                                color: '#778196',
+                                color:
+                                    '#778196',
                                 fontSize: 13,
                             }}
                         >
                             当前质检员有{' '}
-                            {pendingSatisfiedReports.length}{' '}
+                            {
+                                pendingSatisfiedReports.length
+                            }{' '}
                             份满意报告等待审核
-                            {selectedSatisfiedCount > 0
+
+                            {selectedSatisfiedCount >
+                            0
                                 ? `，已选中其中 ${selectedSatisfiedCount} 份`
                                 : ''}
                         </div>
@@ -502,29 +1057,49 @@ function ManagerReports({ notify }: { notify: any }) {
 
                     <div
                         style={{
-                            display: 'flex',
-                            alignItems: 'center',
+                            display:
+                                'flex',
+                            alignItems:
+                                'center',
                             gap: 10,
-                            flexWrap: 'wrap',
+                            flexWrap:
+                                'wrap',
                         }}
                     >
                         <label
                             style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
+                                display:
+                                    'inline-flex',
+                                alignItems:
+                                    'center',
                                 gap: 8,
-                                padding: '10px 12px',
-                                border: '1px solid #dfe6ef',
-                                borderRadius: 12,
-                                cursor: 'pointer',
+                                padding:
+                                    '10px 12px',
+                                border:
+                                    '1px solid #dfe6ef',
+                                borderRadius:
+                                    12,
+                                cursor:
+                                    'pointer',
                             }}
                         >
                             <input
                                 type="checkbox"
-                                checked={allSelectableChecked}
-                                disabled={selectableIds.length === 0}
-                                onChange={(event) =>
-                                    toggleAll(event.target.checked)
+                                checked={
+                                    allSelectableChecked
+                                }
+                                disabled={
+                                    selectableIds.length ===
+                                    0
+                                }
+                                onChange={(
+                                    event,
+                                ) =>
+                                    toggleAll(
+                                        event
+                                            .target
+                                            .checked,
+                                    )
                                 }
                             />
 
@@ -535,13 +1110,19 @@ function ManagerReports({ notify }: { notify: any }) {
                             className="btn secondary"
                             disabled={
                                 batchBusy ||
-                                pendingSatisfiedReports.length === 0
+                                pendingSatisfiedReports.length ===
+                                    0
                             }
-                            onClick={approveAllSatisfied}
+                            onClick={
+                                approveAllSatisfied
+                            }
                         >
                             <Check />
+
                             一键通过全部满意
-                            {pendingSatisfiedReports.length > 0
+
+                            {pendingSatisfiedReports.length >
+                            0
                                 ? `（${pendingSatisfiedReports.length}）`
                                 : ''}
                         </button>
@@ -550,11 +1131,15 @@ function ManagerReports({ notify }: { notify: any }) {
                             className="btn primary"
                             disabled={
                                 batchBusy ||
-                                selectedReports.length === 0
+                                selectedReports.length ===
+                                    0
                             }
-                            onClick={approveSelected}
+                            onClick={
+                                approveSelected
+                            }
                         >
                             <Check />
+
                             {batchBusy
                                 ? '批量审核中…'
                                 : `通过已选（${selectedReports.length}）`}
@@ -563,44 +1148,64 @@ function ManagerReports({ notify }: { notify: any }) {
                 </section>
             )}
 
+            {/* ============================================= */}
+            {/* 左右报告布局 */}
+            {/* ============================================= */}
+
             <div className="review-layout">
                 <Panel title="按质检员查看审核进度">
                     <div className="inspector-review-list">
-                        {groups.map((group) => (
-                            <button
-                                key={group.id}
-                                className={
-                                    selectedInspector === group.id
-                                        ? 'active'
-                                        : ''
-                                }
-                                onClick={() =>
-                                    chooseInspector(group.id)
-                                }
-                            >
-                                <div className="avatar">
-                                    {group.name?.[0] || '?'}
-                                </div>
+                        {groups.map(
+                            (group) => (
+                                <button
+                                    key={
+                                        group.id
+                                    }
+                                    className={
+                                        selectedInspector ===
+                                        group.id
+                                            ? 'active'
+                                            : ''
+                                    }
+                                    onClick={() =>
+                                        chooseInspector(
+                                            group.id,
+                                        )
+                                    }
+                                >
+                                    <div className="avatar">
+                                        {group
+                                            .name?.[0] ||
+                                            '?'}
+                                    </div>
 
-                                <div className="grow">
-                                    <b>{group.name}</b>
+                                    <div className="grow">
+                                        <b>
+                                            {
+                                                group.name
+                                            }
+                                        </b>
 
-                                    <span>
-                                        {group.pending
-                                            ? `还有 ${group.pending} 份未审核`
-                                            : '这个区间已全部审核完成'}
+                                        <span>
+                                            {group.pending
+                                                ? `还有 ${group.pending} 份未审核`
+                                                : '这个区间已全部审核完成'}
+                                        </span>
+                                    </div>
+
+                                    <span className="count-badge">
+                                        {
+                                            group.pending
+                                        }
                                     </span>
-                                </div>
+                                </button>
+                            ),
+                        )}
 
-                                <span className="count-badge">
-                                    {group.pending}
-                                </span>
-                            </button>
-                        ))}
-
-                        {groups.length === 0 && (
+                        {groups.length ===
+                            0 && (
                             <div className="empty-hint">
-                                当前日期范围内没有报告。
+                                当前日期范围内没有报告
                             </div>
                         )}
                     </div>
@@ -611,122 +1216,154 @@ function ManagerReports({ notify }: { notify: any }) {
                         selectedInspector
                             ? `${
                                   groups.find(
-                                      (group) =>
+                                      (
+                                          group,
+                                      ) =>
                                           group.id ===
                                           selectedInspector,
-                                  )?.name || ''
+                                  )?.name ||
+                                  ''
                               } 的报告`
                             : '请选择质检员'
                     }
                 >
                     <div className="compact-report-list">
-                        {filtered.map((report) => {
-                            const canSelect =
-                                report.review_status ===
-                                'pending_review';
+                        {filtered.map(
+                            (report) => {
+                                const canSelect =
+                                    report.review_status ===
+                                    'pending_review';
 
-                            return (
-                                <div
-                                    key={report.id}
-                                    style={{
-                                        display: 'grid',
-                                        gridTemplateColumns:
-                                            'auto minmax(0, 1fr)',
-                                        alignItems: 'center',
-                                        gap: 10,
-                                    }}
-                                >
-                                    <label
+                                return (
+                                    <div
+                                        key={
+                                            report.id
+                                        }
                                         style={{
-                                            width: 42,
-                                            height: 42,
-                                            display: 'grid',
-                                            placeItems: 'center',
-                                            border: '1px solid #e4e9f0',
-                                            borderRadius: 12,
-                                            background: canSelect
-                                                ? '#ffffff'
-                                                : '#f5f7fa',
-                                            cursor: canSelect
-                                                ? 'pointer'
-                                                : 'not-allowed',
+                                            display:
+                                                'grid',
+                                            gridTemplateColumns:
+                                                'auto minmax(0, 1fr)',
+                                            alignItems:
+                                                'center',
+                                            gap: 10,
                                         }}
                                     >
-                                        <input
-                                            type="checkbox"
-                                            disabled={!canSelect}
-                                            checked={selectedReports.includes(
-                                                report.id,
-                                            )}
-                                            onChange={(event) =>
-                                                toggleReport(
+                                        <label
+                                            style={{
+                                                width: 42,
+                                                height: 42,
+                                                display:
+                                                    'grid',
+                                                placeItems:
+                                                    'center',
+                                                border:
+                                                    '1px solid #e4e9f0',
+                                                borderRadius:
+                                                    12,
+                                                background:
+                                                    canSelect
+                                                        ? '#ffffff'
+                                                        : '#f5f7fa',
+                                                cursor:
+                                                    canSelect
+                                                        ? 'pointer'
+                                                        : 'not-allowed',
+                                            }}
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                disabled={
+                                                    !canSelect
+                                                }
+                                                checked={selectedReports.includes(
                                                     report.id,
-                                                    event.target
-                                                        .checked,
+                                                )}
+                                                onChange={(
+                                                    event,
+                                                ) =>
+                                                    toggleReport(
+                                                        report.id,
+                                                        event
+                                                            .target
+                                                            .checked,
+                                                    )
+                                                }
+                                            />
+                                        </label>
+
+                                        <button
+                                            onClick={() =>
+                                                openReport(
+                                                    report,
                                                 )
                                             }
-                                        />
-                                    </label>
-
-                                    <button
-                                        onClick={() =>
-                                            openReport(report)
-                                        }
-                                    >
-                                        <div>
-                                            <b>
-                                                {
-                                                    report.promoter_name
-                                                }
-                                            </b>
-
-                                            <span>
-                                                {report.task_date} ·{' '}
-                                                {report.rating ===
-                                                'satisfied'
-                                                    ? '满意'
-                                                    : report.rating ===
-                                                        'neutral'
-                                                      ? '一般'
-                                                      : '不满意'}
-                                            </span>
-                                        </div>
-
-                                        <span
-                                            className={`review-badge ${report.review_status}`}
                                         >
-                                            {
-                                                reviewLabel[
-                                                    report
-                                                        .review_status as ReviewStatus
-                                                ]
-                                            }
-                                        </span>
-                                    </button>
-                                </div>
-                            );
-                        })}
+                                            <div>
+                                                <b>
+                                                    {
+                                                        report.promoter_name
+                                                    }
+                                                </b>
+
+                                                <span>
+                                                    {
+                                                        report.task_date
+                                                    }{' '}
+                                                    ·{' '}
+
+                                                    {report.rating ===
+                                                    'satisfied'
+                                                        ? '满意'
+                                                        : report.rating ===
+                                                            'neutral'
+                                                          ? '一般'
+                                                          : '不满意'}
+                                                </span>
+                                            </div>
+
+                                            <span
+                                                className={`review-badge ${report.review_status}`}
+                                            >
+                                                {
+                                                    reviewLabel[
+                                                        report.review_status as ReviewStatus
+                                                    ]
+                                                }
+                                            </span>
+                                        </button>
+                                    </div>
+                                );
+                            },
+                        )}
 
                         {selectedInspector &&
-                            filtered.length === 0 && (
-                                <div className="empty-hint">
-                                    当前筛选条件下没有报告。
-                                </div>
-                            )}
+                            filtered.length ===
+                                0 && (
+                            <div className="empty-hint">
+                                当前筛选条件下没有报告
+                            </div>
+                        )}
 
                         {!selectedInspector && (
                             <div className="empty-hint">
-                                请先从左侧选择一名质检员。
+                                请先从左侧选择一名质检员
                             </div>
                         )}
                     </div>
                 </Panel>
             </div>
 
+            {/* ============================================= */}
+            {/* 报告审核 Drawer */}
+            {/* ============================================= */}
+
             {active && (
                 <div
                     className="drawer-backdrop"
-                    onClick={() => setActive(null)}
+                    onClick={() =>
+                        setActive(null)
+                    }
                 >
                     <aside
                         className="drawer"
@@ -740,12 +1377,20 @@ function ManagerReports({ notify }: { notify: any }) {
                                     REPORT REVIEW
                                 </span>
 
-                                <h2>{active.promoter_name}</h2>
+                                <h2>
+                                    {
+                                        active.promoter_name
+                                    }
+                                </h2>
                             </div>
 
                             <button
                                 className="icon-btn"
-                                onClick={() => setActive(null)}
+                                onClick={() =>
+                                    setActive(
+                                        null,
+                                    )
+                                }
                             >
                                 <X />
                             </button>
@@ -753,22 +1398,46 @@ function ManagerReports({ notify }: { notify: any }) {
 
                         <dl className="detail-grid">
                             <div>
-                                <dt>质检员</dt>
-                                <dd>{active.inspector_name}</dd>
+                                <dt>
+                                    质检员
+                                </dt>
+
+                                <dd>
+                                    {
+                                        active.inspector_name
+                                    }
+                                </dd>
                             </div>
 
                             <div>
-                                <dt>质检号码</dt>
-                                <dd>{active.inspector_phone}</dd>
+                                <dt>
+                                    质检号码
+                                </dt>
+
+                                <dd>
+                                    {
+                                        active.inspector_phone
+                                    }
+                                </dd>
                             </div>
 
                             <div>
-                                <dt>日期</dt>
-                                <dd>{active.task_date}</dd>
+                                <dt>
+                                    日期
+                                </dt>
+
+                                <dd>
+                                    {
+                                        active.task_date
+                                    }
+                                </dd>
                             </div>
 
                             <div>
-                                <dt>评价</dt>
+                                <dt>
+                                    评价
+                                </dt>
+
                                 <dd>
                                     {active.rating ===
                                     'satisfied'
@@ -782,15 +1451,22 @@ function ManagerReports({ notify }: { notify: any }) {
                         </dl>
 
                         <Panel title="质检总结">
-                            <p>{active.summary}</p>
+                            <p>
+                                {
+                                    active.summary
+                                }
+                            </p>
 
                             <a
                                 className="btn secondary"
-                                href={active.evidence_url}
+                                href={
+                                    active.evidence_url
+                                }
                                 target="_blank"
                                 rel="noreferrer"
                             >
                                 <ExternalLink />
+
                                 打开证据链接
                             </a>
                         </Panel>
@@ -801,8 +1477,14 @@ function ManagerReports({ notify }: { notify: any }) {
                             <textarea
                                 rows={5}
                                 value={note}
-                                onChange={(event) =>
-                                    setNote(event.target.value)
+                                onChange={(
+                                    event,
+                                ) =>
+                                    setNote(
+                                        event
+                                            .target
+                                            .value,
+                                    )
                                 }
                             />
                         </label>
@@ -822,7 +1504,9 @@ function ManagerReports({ notify }: { notify: any }) {
                             <button
                                 className="btn primary"
                                 onClick={() =>
-                                    decide('approved')
+                                    decide(
+                                        'approved',
+                                    )
                                 }
                             >
                                 审核通过
