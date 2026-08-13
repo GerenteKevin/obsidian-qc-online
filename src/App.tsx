@@ -114,6 +114,10 @@ function InspectorProgress({tasks,reports,inspectors}:{tasks:Task[];reports:Repo
 // 不再显示“本周最多几次”
 // =========================================================
 
+// ============================================================
+// PROMOTERS
+// ============================================================
+
 function Promoters({ notify }: { notify: any }) {
     const [rows, setRows] = useState<Promoter[]>([])
     const [q, setQ] = useState('')
@@ -137,26 +141,48 @@ function Promoters({ notify }: { notify: any }) {
     }, [])
 
     const importFile = async (file: File) => {
-        const parsed = parseCsv(await file.text())
-            .map((row: any) => ({
-                id: String(
-                    row.promoter_id || '',
-                ).trim(),
+        const raw = parseCsv(await file.text())
 
-                nickname: String(
-                    row.nickname || '',
-                ).trim(),
+        const errors: string[] = []
 
-                whatsapp: String(
-                    row.whatsapp || '',
-                ).trim(),
-            }))
-            .filter(
-                (item) =>
-                    item.id &&
-                    item.nickname &&
-                    item.whatsapp,
+        const parsed = raw.map((r: any, index: number) => {
+            const line = index + 2
+
+            const id = String(r.promoter_id || '').trim()
+            const nickname = String(r.nickname || '').trim()
+            const whatsapp = String(r.whatsapp || '').trim()
+
+            if (!id) {
+                errors.push(`第 ${line} 行：promoter_id 为空`)
+            }
+
+            if (!nickname) {
+                errors.push(`第 ${line} 行：nickname 为空`)
+            }
+
+            if (!whatsapp) {
+                errors.push(`第 ${line} 行：whatsapp 为空`)
+            }
+
+            return {
+                id,
+                nickname,
+                whatsapp,
+            }
+        })
+
+        if (errors.length > 0) {
+            notify(
+                `${errors.slice(0, 5).join('；')}${
+                    errors.length > 5
+                        ? `；另外还有 ${errors.length - 5} 个错误`
+                        : ''
+                }`,
+                'error',
             )
+
+            return
+        }
 
         const { error } = await supabase
             .from('promoters')
@@ -171,25 +197,20 @@ function Promoters({ notify }: { notify: any }) {
 
         await load()
 
-        notify(
-            `已导入 ${parsed.length} 位推广员`,
-        )
+        notify(`已导入 ${parsed.length} 位推广员`)
     }
 
-    const visible = rows.filter(
-        (promoter) =>
-            `${promoter.id} ${promoter.nickname}`
-                .toLowerCase()
-                .includes(
-                    q.toLowerCase(),
-                ),
+    const visible = rows.filter((p) =>
+        `${p.id} ${p.nickname}`
+            .toLowerCase()
+            .includes(q.toLowerCase()),
     )
 
     return (
         <>
             <PageHead
                 title="推广员"
-                text="管理推广员基础资料 本周质检要求请在智能分配页面导入"
+                text="管理推广员基础资料"
             >
                 <SearchBox
                     value={q}
@@ -201,51 +222,51 @@ function Promoters({ notify }: { notify: any }) {
                 />
             </PageHead>
 
+            <Panel title="推广员 CSV 格式">
+                <div
+                    style={{
+                        display: 'grid',
+                        gap: 6,
+                    }}
+                >
+                    <code>
+                        promoter_id,nickname,whatsapp
+                    </code>
+
+                    <code>
+                        10001,Maria,https://wa.me/5511999999999
+                    </code>
+
+                    <small style={{ color: '#778196' }}>
+                        第一行必须保留字段名称。promoter_id、nickname、whatsapp 都不能为空。
+                    </small>
+                </div>
+            </Panel>
+
             <div className="card-table">
-                {visible.map(
-                    (promoter) => (
-                        <article
-                            key={promoter.id}
+                {visible.map((p) => (
+                    <article key={p.id}>
+                        <div>
+                            <code>{p.id}</code>
+                            <h3>{p.nickname}</h3>
+                        </div>
+
+                        <div className="metric">
+                            <span>累计完成质检</span>
+                            <b>{p.inspection_count}</b>
+                        </div>
+
+                        <a
+                            className="btn secondary"
+                            href={p.whatsapp}
+                            target="_blank"
+                            rel="noreferrer"
                         >
-                            <div>
-                                <code>
-                                    {promoter.id}
-                                </code>
-
-                                <h3>
-                                    {
-                                        promoter.nickname
-                                    }
-                                </h3>
-                            </div>
-
-                            <div className="metric">
-                                <span>
-                                    累计完成质检
-                                </span>
-
-                                <b>
-                                    {
-                                        promoter.inspection_count
-                                    }
-                                </b>
-                            </div>
-
-                            <a
-                                className="btn secondary"
-                                href={
-                                    promoter.whatsapp
-                                }
-                                target="_blank"
-                                rel="noreferrer"
-                            >
-                                <ExternalLink />
-
-                                打开 WhatsApp
-                            </a>
-                        </article>
-                    ),
-                )}
+                            <ExternalLink />
+                            打开 WhatsApp
+                        </a>
+                    </article>
+                ))}
             </div>
 
             {visible.length === 0 && (
@@ -259,16 +280,161 @@ function Promoters({ notify }: { notify: any }) {
 
 
 
-// =========================================================
-// ALLOCATION
-//
-// 新逻辑
-//
-// A 导入本周必须质检的推广员和次数
-// B 设置每个质检员这次要拿多少任务
-// C 系统比较需求和产能
-// D 只分配计划中尚未分够的人
-// =========================================================
+// ============================================================
+// INSPECTORS
+// ============================================================
+
+function Inspectors({ notify }: { notify: any }) {
+    const [rows, setRows] = useState<Inspector[]>([])
+
+    const load = async () => {
+        const { data, error } = await supabase
+            .from('inspectors')
+            .select('*')
+            .order('nickname')
+
+        if (error) {
+            notify(error.message, 'error')
+            return
+        }
+
+        setRows((data || []) as Inspector[])
+    }
+
+    useEffect(() => {
+        void load()
+    }, [])
+
+    const importFile = async (file: File) => {
+        const raw = parseCsv(await file.text())
+
+        const errors: string[] = []
+
+        const parsed = raw.map((r: any, index: number) => {
+            const line = index + 2
+
+            const id = String(r.inspector_id || '').trim()
+            const nickname = String(r.nickname || '').trim()
+            const current_phone = String(r.current_phone || '').trim()
+            const target_tasks = Number(r.target_tasks || 0)
+
+            if (!id) {
+                errors.push(`第 ${line} 行：inspector_id 为空`)
+            }
+
+            if (!nickname) {
+                errors.push(`第 ${line} 行：nickname 为空`)
+            }
+
+            if (!current_phone) {
+                errors.push(`第 ${line} 行：current_phone 为空`)
+            }
+
+            if (
+                !Number.isInteger(target_tasks) ||
+                target_tasks < 0
+            ) {
+                errors.push(
+                    `第 ${line} 行：target_tasks 必须是 0 或正整数`,
+                )
+            }
+
+            return {
+                id,
+                nickname,
+                current_phone,
+                target_tasks,
+            }
+        })
+
+        if (errors.length > 0) {
+            notify(
+                `${errors.slice(0, 5).join('；')}${
+                    errors.length > 5
+                        ? `；另外还有 ${errors.length - 5} 个错误`
+                        : ''
+                }`,
+                'error',
+            )
+
+            return
+        }
+
+        const { error } = await supabase
+            .from('inspectors')
+            .upsert(parsed, {
+                onConflict: 'id',
+            })
+
+        if (error) {
+            notify(error.message, 'error')
+            return
+        }
+
+        await load()
+
+        notify(`已导入 ${parsed.length} 位质检员`)
+    }
+
+    return (
+        <>
+            <PageHead
+                title="质检员"
+                text="管理质检员资料和默认任务数量"
+            >
+                <FileButton onFile={importFile} />
+            </PageHead>
+
+            <Panel title="质检员 CSV 格式">
+                <div
+                    style={{
+                        display: 'grid',
+                        gap: 6,
+                    }}
+                >
+                    <code>
+                        inspector_id,nickname,current_phone,target_tasks
+                    </code>
+
+                    <code>
+                        QC001,Kevin,5511999999999,10
+                    </code>
+
+                    <small style={{ color: '#778196' }}>
+                        target_tasks 是默认任务数量，智能分配时仍然可以手动修改。
+                    </small>
+                </div>
+            </Panel>
+
+            <div className="card-table">
+                {rows.map((i) => (
+                    <article key={i.id}>
+                        <div>
+                            <code>{i.id}</code>
+                            <h3>{i.nickname}</h3>
+                        </div>
+
+                        <div className="metric">
+                            <span>当前号码</span>
+                            <b>{i.current_phone}</b>
+                        </div>
+
+                        <div className="metric">
+                            <span>默认任务数</span>
+                            <b>{i.target_tasks}</b>
+                        </div>
+                    </article>
+                ))}
+            </div>
+        </>
+    )
+}
+
+
+
+// ============================================================
+// ALLOCATION V2
+// ============================================================
 
 function Allocation({ notify }: { notify: any }) {
     const [inspectors, setInspectors] =
@@ -298,25 +464,24 @@ function Allocation({ notify }: { notify: any }) {
     const [confirming, setConfirming] =
         useState(false)
 
+    const [savingPromoter, setSavingPromoter] =
+        useState<string | null>(null)
 
-    // =====================================================
-    // 当前任务日期对应的星期一
-    // =====================================================
+    const [resetting, setResetting] =
+        useState(false)
+
+
+    // ========================================================
+    // 星期
+    // ========================================================
 
     const week = useMemo(
         () => weekStart(date),
         [date],
     )
 
-
-    // =====================================================
-    // 周日
-    // =====================================================
-
     const weekEnd = useMemo(() => {
-        const d = new Date(
-            `${week}T00:00:00`,
-        )
+        const d = new Date(`${week}T00:00:00`)
 
         d.setDate(
             d.getDate() + 6,
@@ -328,9 +493,9 @@ function Allocation({ notify }: { notify: any }) {
     }, [week])
 
 
-    // =====================================================
-    // 加载质检员
-    // =====================================================
+    // ========================================================
+    // 质检员
+    // ========================================================
 
     const loadInspectors = async () => {
         const { data, error } =
@@ -340,11 +505,7 @@ function Allocation({ notify }: { notify: any }) {
                 .order('nickname')
 
         if (error) {
-            notify(
-                error.message,
-                'error',
-            )
-
+            notify(error.message, 'error')
             return
         }
 
@@ -355,31 +516,27 @@ function Allocation({ notify }: { notify: any }) {
 
         setCounts(
             Object.fromEntries(
-                list.map(
-                    (inspector) => [
-                        inspector.id,
-                        inspector.target_tasks,
-                    ],
-                ),
+                list.map((i) => [
+                    i.id,
+                    i.target_tasks,
+                ]),
             ),
         )
 
         setPhones(
             Object.fromEntries(
-                list.map(
-                    (inspector) => [
-                        inspector.id,
-                        inspector.current_phone,
-                    ],
-                ),
+                list.map((i) => [
+                    i.id,
+                    i.current_phone,
+                ]),
             ),
         )
     }
 
 
-    // =====================================================
-    // 加载本周计划状态
-    // =====================================================
+    // ========================================================
+    // 本周计划
+    // ========================================================
 
     const loadPlan = async () => {
         setPlanLoading(true)
@@ -388,25 +545,18 @@ function Allocation({ notify }: { notify: any }) {
             await supabase.rpc(
                 'get_weekly_inspection_plan_status',
                 {
-                    p_week_start:
-                        week,
+                    p_week_start: week,
                 },
             )
 
         setPlanLoading(false)
 
         if (error) {
-            notify(
-                error.message,
-                'error',
-            )
-
+            notify(error.message, 'error')
             return
         }
 
-        setPlanRows(
-            data || [],
-        )
+        setPlanRows(data || [])
     }
 
 
@@ -417,24 +567,15 @@ function Allocation({ notify }: { notify: any }) {
 
     useEffect(() => {
         setPreview([])
-
         void loadPlan()
     }, [week])
 
 
-    // =====================================================
-    // 导入本周计划 CSV
-    //
-    // 格式：
+    // ========================================================
+    // CSV 导入
     //
     // promoter_id,required_count
-    // 10001,1
-    // 10002,3
-    // 10003,2
-    //
-    // 同一周重新导入
-    // = 用新 CSV 替换本周计划
-    // =====================================================
+    // ========================================================
 
     const importWeeklyPlan = async (
         file: File,
@@ -447,117 +588,213 @@ function Allocation({ notify }: { notify: any }) {
                     await file.text(),
                 )
 
-
-            const parsed = raw
-                .map(
-                    (row: any) => ({
-                        promoter_id:
-                            String(
-                                row.promoter_id ||
-                                    '',
-                            ).trim(),
-
-                        required_count:
-                            Number(
-                                row.required_count,
-                            ),
-                    }),
-                )
-                .filter(
-                    (row) =>
-                        row.promoter_id,
-                )
-
-
-            if (
-                parsed.length === 0
-            ) {
+            if (raw.length === 0) {
                 notify(
-                    'CSV 没有有效推广员',
+                    'CSV 没有数据',
                     'error',
                 )
-
                 return
             }
 
+            const errors: string[] = []
 
-            const invalid =
-                parsed.find(
-                    (row) =>
+            const parsed = raw.map(
+                (row: any, index: number) => {
+                    const line =
+                        index + 2
+
+                    const promoter_id =
+                        String(
+                            row.promoter_id ||
+                                '',
+                        ).trim()
+
+                    const rawCount =
+                        String(
+                            row.required_count ??
+                                '',
+                        ).trim()
+
+                    const required_count =
+                        Number(rawCount)
+
+
+                    if (!promoter_id) {
+                        errors.push(
+                            `第 ${line} 行：promoter_id 为空`,
+                        )
+                    }
+
+
+                    if (!rawCount) {
+                        errors.push(
+                            `第 ${line} 行：推广员 ${promoter_id || '(空ID)'} 没有填写 required_count`,
+                        )
+                    } else if (
                         !Number.isInteger(
-                            row.required_count,
+                            required_count,
                         ) ||
-                        row.required_count <
-                            1,
-                )
+                        required_count < 1
+                    ) {
+                        errors.push(
+                            `第 ${line} 行：推广员 ${promoter_id || '(空ID)'} 的 required_count="${rawCount}"，必须是 1、2、3...`,
+                        )
+                    }
 
 
-            if (invalid) {
-                notify(
-                    `推广员 ${invalid.promoter_id} 的 required_count 无效`,
-                    'error',
-                )
-
-                return
-            }
-
-
-            const duplicateIds =
-                parsed
-                    .map(
-                        (row) =>
-                            row.promoter_id,
-                    )
-                    .filter(
-                        (
-                            id,
-                            index,
-                            arr,
-                        ) =>
-                            arr.indexOf(
-                                id,
-                            ) !==
-                            index,
-                    )
-
-
-            if (
-                duplicateIds.length >
-                0
-            ) {
-                notify(
-                    `CSV 有重复推广员 ID：${duplicateIds[0]}`,
-                    'error',
-                )
-
-                return
-            }
-
-
-            const confirmed =
-                window.confirm(
-                    `确定导入 ${week} 至 ${weekEnd} 的质检计划吗\n\n本次共 ${parsed.length} 位推广员\n同一周旧计划会被新 CSV 替换`,
-                )
-
-
-            if (!confirmed) {
-                return
-            }
-
-
-            const {
-                data,
-                error,
-            } = await supabase.rpc(
-                'replace_weekly_inspection_plan',
-                {
-                    p_week_start:
-                        week,
-
-                    p_rows:
-                        parsed,
+                    return {
+                        promoter_id,
+                        required_count,
+                        __line: line,
+                    }
                 },
             )
+
+
+            // ================================================
+            // 重复 ID
+            // ================================================
+
+            const firstLine =
+                new Map<string, number>()
+
+
+            for (const row of parsed) {
+                if (!row.promoter_id) {
+                    continue
+                }
+
+                if (
+                    firstLine.has(
+                        row.promoter_id,
+                    )
+                ) {
+                    errors.push(
+                        `第 ${row.__line} 行：推广员 ${row.promoter_id} 重复，第一次出现在第 ${firstLine.get(row.promoter_id)} 行`,
+                    )
+                } else {
+                    firstLine.set(
+                        row.promoter_id,
+                        row.__line,
+                    )
+                }
+            }
+
+
+            if (errors.length > 0) {
+                notify(
+                    `${errors
+                        .slice(0, 5)
+                        .join('；')}${
+                        errors.length > 5
+                            ? `；另外还有 ${errors.length - 5} 个错误`
+                            : ''
+                    }`,
+                    'error',
+                )
+
+                return
+            }
+
+
+            // ================================================
+            // 检查数据库有没有这些推广员
+            // ================================================
+
+            const { data: missing, error: validateError } =
+                await supabase.rpc(
+                    'validate_weekly_plan_promoters',
+                    {
+                        p_promoter_ids:
+                            parsed.map(
+                                (r) =>
+                                    r.promoter_id,
+                            ),
+                    },
+                )
+
+
+            if (validateError) {
+                notify(
+                    validateError.message,
+                    'error',
+                )
+                return
+            }
+
+
+            if (
+                missing &&
+                missing.length > 0
+            ) {
+                const messages =
+                    missing.map(
+                        (m: any) => {
+                            const original =
+                                parsed.find(
+                                    (r) =>
+                                        r.promoter_id ===
+                                        m.promoter_id,
+                                )
+
+                            return `第 ${original?.__line || '?'} 行：推广员 ID ${m.promoter_id} 不存在`
+                        },
+                    )
+
+                notify(
+                    `${messages
+                        .slice(0, 5)
+                        .join('；')}${
+                        messages.length > 5
+                            ? `；另外还有 ${messages.length - 5} 个不存在的 ID`
+                            : ''
+                    }`,
+                    'error',
+                )
+
+                return
+            }
+
+
+            const cleanRows =
+                parsed.map(
+                    ({
+                        promoter_id,
+                        required_count,
+                    }) => ({
+                        promoter_id,
+                        required_count,
+                    }),
+                )
+
+
+            const ok =
+                window.confirm(
+                    `确定导入 ${week} 至 ${weekEnd} 的质检计划吗？\n\n推广员：${cleanRows.length} 人\n计划质检：${cleanRows.reduce(
+                        (sum, r) =>
+                            sum +
+                            r.required_count,
+                        0,
+                    )} 次\n\n如果这一周已经有计划，将使用这份 CSV 更新计划。`,
+                )
+
+
+            if (!ok) {
+                return
+            }
+
+
+            const { data, error } =
+                await supabase.rpc(
+                    'replace_weekly_inspection_plan',
+                    {
+                        p_week_start:
+                            week,
+
+                        p_rows:
+                            cleanRows,
+                    },
+                )
 
 
             if (error) {
@@ -565,7 +802,6 @@ function Allocation({ notify }: { notify: any }) {
                     error.message,
                     'error',
                 )
-
                 return
             }
 
@@ -576,7 +812,7 @@ function Allocation({ notify }: { notify: any }) {
 
 
             notify(
-                `已导入 ${data?.promoter_count || parsed.length} 位推广员 共需要 ${data?.total_required || 0} 次质检`,
+                `导入成功：${data?.promoter_count || cleanRows.length} 位推广员，共 ${data?.total_required || 0} 次质检`,
             )
         } finally {
             setImporting(false)
@@ -584,20 +820,242 @@ function Allocation({ notify }: { notify: any }) {
     }
 
 
-    // =====================================================
-    // 汇总数字
-    // =====================================================
+    // ========================================================
+    // 修改单个推广员次数
+    // ========================================================
 
-    const totalPromoters =
-        planRows.length
+    const changeRequiredCount =
+        async (
+            row: any,
+            nextCount: number,
+        ) => {
+            if (nextCount < 1) {
+                return
+            }
 
+
+            if (
+                nextCount <
+                Number(
+                    row.assigned_count ||
+                        0,
+                )
+            ) {
+                notify(
+                    `${row.promoter_name} 已经分配 ${row.assigned_count} 次，计划不能降低到 ${nextCount} 次`,
+                    'error',
+                )
+
+                return
+            }
+
+
+            setSavingPromoter(
+                row.promoter_id,
+            )
+
+
+            const { error } =
+                await supabase.rpc(
+                    'set_weekly_plan_required_count',
+                    {
+                        p_week_start:
+                            week,
+
+                        p_promoter_id:
+                            row.promoter_id,
+
+                        p_required_count:
+                            nextCount,
+                    },
+                )
+
+
+            setSavingPromoter(null)
+
+
+            if (error) {
+                notify(
+                    error.message,
+                    'error',
+                )
+                return
+            }
+
+
+            setPreview([])
+
+            await loadPlan()
+
+
+            notify(
+                `${row.promoter_name} 本周计划已改为 ${nextCount} 次`,
+            )
+        }
+
+
+    // ========================================================
+    // 删除单个尚未分配的推广员
+    // ========================================================
+
+    const removePromoter =
+        async (row: any) => {
+            if (
+                Number(
+                    row.assigned_count ||
+                        0,
+                ) > 0
+            ) {
+                notify(
+                    `${row.promoter_name} 已经有 ${row.assigned_count} 个任务，不能直接删除`,
+                    'error',
+                )
+                return
+            }
+
+
+            const ok =
+                window.confirm(
+                    `确定把 ${row.promoter_name} (${row.promoter_id}) 从 ${week} 这一周的质检计划删除吗？`,
+                )
+
+
+            if (!ok) {
+                return
+            }
+
+
+            const { error } =
+                await supabase.rpc(
+                    'remove_promoter_from_weekly_plan',
+                    {
+                        p_week_start:
+                            week,
+
+                        p_promoter_id:
+                            row.promoter_id,
+                    },
+                )
+
+
+            if (error) {
+                notify(
+                    error.message,
+                    'error',
+                )
+                return
+            }
+
+
+            setPreview([])
+            await loadPlan()
+
+            notify(
+                `已从本周计划删除 ${row.promoter_name}`,
+            )
+        }
+
+
+    // ========================================================
+    // 重置整周
+    // ========================================================
+
+    const resetPlan = async () => {
+        if (
+            planRows.length === 0
+        ) {
+            notify(
+                '这一周没有质检计划',
+                'error',
+            )
+            return
+        }
+
+
+        const assigned =
+            planRows.reduce(
+                (sum, row) =>
+                    sum +
+                    Number(
+                        row.assigned_count ||
+                            0,
+                    ),
+                0,
+            )
+
+
+        const firstConfirm =
+            window.confirm(
+                `确定重置 ${week} 至 ${weekEnd} 的质检计划吗？\n\n当前 ${planRows.length} 位推广员，已经分配 ${assigned} 个任务。\n\n如果存在已经开始、提交或审核的任务，系统会拒绝重置。`,
+            )
+
+
+        if (!firstConfirm) {
+            return
+        }
+
+
+        let deletePending = false
+
+
+        if (assigned > 0) {
+            deletePending =
+                window.confirm(
+                    `本周已经存在任务。\n\n如果这些任务仍然只是“待执行”，可以一起删除后重置。\n\n点击“确定”：尝试删除待执行任务并重置计划。\n点击“取消”：不删除任何任务。`,
+                )
+
+
+            if (!deletePending) {
+                return
+            }
+        }
+
+
+        setResetting(true)
+
+
+        const { data, error } =
+            await supabase.rpc(
+                'reset_weekly_inspection_plan',
+                {
+                    p_week_start:
+                        week,
+
+                    p_delete_pending_tasks:
+                        deletePending,
+                },
+            )
+
+
+        setResetting(false)
+
+
+        if (error) {
+            notify(
+                error.message,
+                'error',
+            )
+            return
+        }
+
+
+        setPreview([])
+        await loadPlan()
+
+
+        notify(
+            `本周计划已重置，删除计划 ${data?.deleted_plan_rows || 0} 条，删除待执行任务 ${data?.deleted_tasks || 0} 条`,
+        )
+    }
+
+
+    // ========================================================
+    // 汇总
+    // ========================================================
 
     const totalRequired =
         planRows.reduce(
-            (
-                sum,
-                row,
-            ) =>
+            (sum, row) =>
                 sum +
                 Number(
                     row.required_count ||
@@ -609,10 +1067,7 @@ function Allocation({ notify }: { notify: any }) {
 
     const totalAssigned =
         planRows.reduce(
-            (
-                sum,
-                row,
-            ) =>
+            (sum, row) =>
                 sum +
                 Number(
                     row.assigned_count ||
@@ -624,10 +1079,7 @@ function Allocation({ notify }: { notify: any }) {
 
     const totalCompleted =
         planRows.reduce(
-            (
-                sum,
-                row,
-            ) =>
+            (sum, row) =>
                 sum +
                 Number(
                     row.completed_count ||
@@ -639,10 +1091,7 @@ function Allocation({ notify }: { notify: any }) {
 
     const remainingToAssign =
         planRows.reduce(
-            (
-                sum,
-                row,
-            ) =>
+            (sum, row) =>
                 sum +
                 Number(
                     row.remaining_to_assign ||
@@ -654,10 +1103,7 @@ function Allocation({ notify }: { notify: any }) {
 
     const remainingToComplete =
         planRows.reduce(
-            (
-                sum,
-                row,
-            ) =>
+            (sum, row) =>
                 sum +
                 Number(
                     row.remaining_to_complete ||
@@ -667,16 +1113,9 @@ function Allocation({ notify }: { notify: any }) {
         )
 
 
-    // =====================================================
-    // 本次质检员设置的总任务数量
-    // =====================================================
-
     const requestedCapacity =
         inspectors.reduce(
-            (
-                sum,
-                inspector,
-            ) =>
+            (sum, inspector) =>
                 sum +
                 Math.max(
                     0,
@@ -690,54 +1129,35 @@ function Allocation({ notify }: { notify: any }) {
         )
 
 
-    // =====================================================
-    // 状态
-    // =====================================================
-
-    const capacityDifference =
-        requestedCapacity -
-        remainingToAssign
-
-
-    // =====================================================
-    // 生成 RPC requests
-    // =====================================================
+    // ========================================================
+    // Requests
+    // ========================================================
 
     const buildRequests = () =>
         inspectors
             .filter(
-                (inspector) =>
+                (i) =>
                     Number(
-                        counts[
-                            inspector.id
-                        ] || 0,
+                        counts[i.id] ||
+                            0,
                     ) > 0,
             )
-            .map(
-                (inspector) => ({
-                    inspector_id:
-                        inspector.id,
+            .map((i) => ({
+                inspector_id: i.id,
 
-                    phone:
-                        String(
-                            phones[
-                                inspector.id
-                            ] || '',
-                        ).trim(),
+                phone: String(
+                    phones[i.id] || '',
+                ).trim(),
 
-                    count:
-                        Number(
-                            counts[
-                                inspector.id
-                            ] || 0,
-                        ),
-                }),
-            )
+                count: Number(
+                    counts[i.id] || 0,
+                ),
+            }))
 
 
-    // =====================================================
-    // 前端基础检查
-    // =====================================================
+    // ========================================================
+    // 检查
+    // ========================================================
 
     const validateAllocation =
         () => {
@@ -746,10 +1166,9 @@ function Allocation({ notify }: { notify: any }) {
                 0
             ) {
                 notify(
-                    '请先导入这一周的推广员质检计划',
+                    '请先导入本周质检计划',
                     'error',
                 )
-
                 return false
             }
 
@@ -762,7 +1181,6 @@ function Allocation({ notify }: { notify: any }) {
                     '本周计划已经全部分配完成',
                     'error',
                 )
-
                 return false
             }
 
@@ -772,10 +1190,9 @@ function Allocation({ notify }: { notify: any }) {
                 0
             ) {
                 notify(
-                    '请设置质检员任务数量',
+                    '请至少给一位质检员设置任务数量',
                     'error',
                 )
-
                 return false
             }
 
@@ -785,10 +1202,9 @@ function Allocation({ notify }: { notify: any }) {
                 remainingToAssign
             ) {
                 notify(
-                    `本次设置 ${requestedCapacity} 个任务 但计划只剩 ${remainingToAssign} 个待分配`,
+                    `设置错误：本周只剩 ${remainingToAssign} 个待分配任务，但你给质检员设置了 ${requestedCapacity} 个。请减少 ${requestedCapacity - remainingToAssign} 个任务。`,
                     'error',
                 )
-
                 return false
             }
 
@@ -804,20 +1220,22 @@ function Allocation({ notify }: { notify: any }) {
                         ] || 0,
                     )
 
-
-                if (
-                    count > 0 &&
-                    !String(
+                const phone =
+                    String(
                         phones[
                             inspector.id
                         ] || '',
                     ).trim()
+
+
+                if (
+                    count > 0 &&
+                    !phone
                 ) {
                     notify(
-                        `${inspector.nickname} 没有填写质检号码`,
+                        `${inspector.nickname} 设置了 ${count} 个任务，但没有填写质检号码`,
                         'error',
                     )
-
                     return false
                 }
             }
@@ -827,20 +1245,14 @@ function Allocation({ notify }: { notify: any }) {
         }
 
 
-    // =====================================================
-    // 预览
-    // =====================================================
+    // ========================================================
+    // Preview
+    // ========================================================
 
     const make = async () => {
-        if (
-            !validateAllocation()
-        ) {
+        if (!validateAllocation()) {
             return
         }
-
-
-        const requests =
-            buildRequests()
 
 
         const { data, error } =
@@ -851,7 +1263,7 @@ function Allocation({ notify }: { notify: any }) {
                         date,
 
                     p_requests:
-                        requests,
+                        buildRequests(),
                 },
             )
 
@@ -861,25 +1273,21 @@ function Allocation({ notify }: { notify: any }) {
                 error.message,
                 'error',
             )
-
             return
         }
 
 
-        setPreview(
-            data || [],
-        )
-
+        setPreview(data || [])
 
         notify(
-            `已预览 ${data?.length || 0} 个任务`,
+            `预览成功：${data?.length || 0} 个任务`,
         )
     }
 
 
-    // =====================================================
-    // 正式生成
-    // =====================================================
+    // ========================================================
+    // Confirm
+    // ========================================================
 
     const confirmAllocation =
         async () => {
@@ -891,18 +1299,17 @@ function Allocation({ notify }: { notify: any }) {
                     '请先预览分配',
                     'error',
                 )
-
                 return
             }
 
 
-            const confirmed =
+            const ok =
                 window.confirm(
-                    `确定生成 ${preview.length} 个质检任务吗`,
+                    `确定生成 ${preview.length} 个质检任务吗？`,
                 )
 
 
-            if (!confirmed) {
+            if (!ok) {
                 return
             }
 
@@ -910,60 +1317,51 @@ function Allocation({ notify }: { notify: any }) {
             setConfirming(true)
 
 
-            try {
-                const requests =
-                    buildRequests()
+            const { data, error } =
+                await supabase.rpc(
+                    'create_allocation_batch',
+                    {
+                        p_task_date:
+                            date,
 
-
-                const {
-                    data,
-                    error,
-                } =
-                    await supabase.rpc(
-                        'create_allocation_batch',
-                        {
-                            p_task_date:
-                                date,
-
-                            p_requests:
-                                requests,
-                        },
-                    )
-
-
-                if (error) {
-                    notify(
-                        error.message,
-                        'error',
-                    )
-
-                    return
-                }
-
-
-                setPreview([])
-
-                await loadPlan()
-
-
-                notify(
-                    `已生成 ${data?.created_count || 0} 个任务`,
+                        p_requests:
+                            buildRequests(),
+                    },
                 )
-            } finally {
-                setConfirming(false)
+
+
+            setConfirming(false)
+
+
+            if (error) {
+                notify(
+                    error.message,
+                    'error',
+                )
+                return
             }
+
+
+            setPreview([])
+
+            await loadPlan()
+
+
+            notify(
+                `成功生成 ${data?.created_count || 0} 个任务`,
+            )
         }
 
 
+    // ========================================================
+    // UI
+    // ========================================================
+
     return (
         <>
-            {/* ================================================= */}
-            {/* 页面头 */}
-            {/* ================================================= */}
-
             <PageHead
                 title="智能分配"
-                text="先导入本周必须质检的推广员和次数 再设置每位质检员的任务数量"
+                text="先决定本周哪些推广员必须质检以及次数，再设置质检员本次任务数量"
             >
                 <label className="date-large">
                     任务日期
@@ -971,13 +1369,9 @@ function Allocation({ notify }: { notify: any }) {
                     <input
                         type="date"
                         value={date}
-                        onChange={(
-                            event,
-                        ) =>
+                        onChange={(e) =>
                             setDate(
-                                event
-                                    .target
-                                    .value,
+                                e.target.value,
                             )
                         }
                     />
@@ -986,95 +1380,137 @@ function Allocation({ notify }: { notify: any }) {
 
 
             {/* ================================================= */}
-            {/* 本周计划 */}
+            {/* PLAN */}
             {/* ================================================= */}
 
-            <Panel title="本周推广员质检计划">
+            <Panel title="本周质检计划">
                 <div
                     style={{
                         display: 'flex',
                         justifyContent:
                             'space-between',
                         alignItems:
-                            'center',
+                            'flex-start',
                         gap: 16,
                         flexWrap:
                             'wrap',
                     }}
                 >
                     <div>
-                        <b>
-                            {week}
-                        </b>
-
-                        <span>
-                            {' '}
-                            至{' '}
-                        </span>
-
-                        <b>
-                            {weekEnd}
-                        </b>
-
-                        <p
+                        <h3
                             style={{
                                 margin:
-                                    '6px 0 0',
-                                color:
-                                    '#778196',
-                                fontSize: 13,
+                                    '0 0 5px',
                             }}
                         >
-                            CSV 格式 promoter_id,required_count
-                        </p>
+                            {week} 至{' '}
+                            {weekEnd}
+                        </h3>
+
+                        <div
+                            style={{
+                                display:
+                                    'grid',
+                                gap: 4,
+                                marginTop:
+                                    10,
+                            }}
+                        >
+                            <b>
+                                CSV 格式
+                            </b>
+
+                            <code>
+                                promoter_id,required_count
+                            </code>
+
+                            <code>
+                                10001,1
+                            </code>
+
+                            <code>
+                                10002,3
+                            </code>
+
+                            <small
+                                style={{
+                                    color:
+                                        '#778196',
+                                }}
+                            >
+                                required_count =
+                                这个推广员本周必须质检的次数
+                            </small>
+                        </div>
                     </div>
 
 
-                    <label
-                        className="btn secondary file-btn"
+                    <div
+                        style={{
+                            display:
+                                'flex',
+                            gap: 8,
+                            flexWrap:
+                                'wrap',
+                        }}
                     >
-                        <Upload />
+                        <label className="btn secondary file-btn">
+                            <Upload />
 
-                        {importing
-                            ? '正在导入…'
-                            : '导入本周质检计划'}
+                            {importing
+                                ? '正在检查…'
+                                : '导入 / 替换计划'}
 
-                        <input
-                            type="file"
-                            accept=".csv,text/csv"
-                            disabled={
-                                importing
-                            }
-                            onChange={(
-                                event,
-                            ) => {
-                                const file =
-                                    event
-                                        .target
-                                        .files?.[0]
-
-                                if (file) {
-                                    void importWeeklyPlan(
-                                        file,
-                                    )
+                            <input
+                                type="file"
+                                accept=".csv,text/csv"
+                                disabled={
+                                    importing
                                 }
+                                onChange={(e) => {
+                                    const file =
+                                        e.target
+                                            .files?.[0]
 
-                                event.target.value =
-                                    ''
-                            }}
-                        />
-                    </label>
+                                    if (file) {
+                                        void importWeeklyPlan(
+                                            file,
+                                        )
+                                    }
+
+                                    e.target.value =
+                                        ''
+                                }}
+                            />
+                        </label>
+
+
+                        <button
+                            type="button"
+                            className="btn secondary"
+                            disabled={
+                                resetting ||
+                                planRows.length ===
+                                    0
+                            }
+                            onClick={() =>
+                                void resetPlan()
+                            }
+                        >
+                            <X />
+
+                            {resetting
+                                ? '重置中…'
+                                : '重置本周计划'}
+                        </button>
+                    </div>
                 </div>
 
-
-                {/* ============================================= */}
-                {/* 本周数字 */}
-                {/* ============================================= */}
 
                 <div
                     className="stat-grid four"
                     style={{
-                        marginTop: 18,
+                        marginTop: 20,
                     }}
                 >
                     <Stat
@@ -1082,9 +1518,9 @@ function Allocation({ notify }: { notify: any }) {
                         value={
                             planLoading
                                 ? '…'
-                                : totalPromoters
+                                : planRows.length
                         }
-                        note="本周名单人数"
+                        note="本周名单"
                     />
 
                     <Stat
@@ -1094,7 +1530,7 @@ function Allocation({ notify }: { notify: any }) {
                                 ? '…'
                                 : totalRequired
                         }
-                        note="必须完成的总次数"
+                        note="必须完成次数"
                     />
 
                     <Stat
@@ -1114,14 +1550,10 @@ function Allocation({ notify }: { notify: any }) {
                                 ? '…'
                                 : totalCompleted
                         }
-                        note={`还差 ${remainingToComplete}`}
+                        note={`待完成 ${remainingToComplete}`}
                     />
                 </div>
 
-
-                {/* ============================================= */}
-                {/* 计划列表 */}
-                {/* ============================================= */}
 
                 {planRows.length >
                     0 && (
@@ -1133,73 +1565,161 @@ function Allocation({ notify }: { notify: any }) {
                     >
                         <Table
                             headers={[
-                                '推广员ID',
                                 '推广员',
                                 '本周要求',
                                 '已分配',
                                 '已完成',
                                 '待分配',
-                                '待完成',
+                                '操作',
                             ]}
                         >
                             {planRows.map(
-                                (
-                                    row,
-                                ) => (
-                                    <tr
-                                        key={
-                                            row.promoter_id
-                                        }
-                                    >
-                                        <td>
-                                            <code>
+                                (row) => {
+                                    const saving =
+                                        savingPromoter ===
+                                        row.promoter_id
+
+                                    const required =
+                                        Number(
+                                            row.required_count,
+                                        )
+
+                                    const assigned =
+                                        Number(
+                                            row.assigned_count,
+                                        )
+
+                                    return (
+                                        <tr
+                                            key={
+                                                row.promoter_id
+                                            }
+                                        >
+                                            <td>
+                                                <b>
+                                                    {
+                                                        row.promoter_name
+                                                    }
+                                                </b>
+
+                                                <div>
+                                                    <code>
+                                                        {
+                                                            row.promoter_id
+                                                        }
+                                                    </code>
+                                                </div>
+                                            </td>
+
+
+                                            <td>
+                                                <div
+                                                    style={{
+                                                        display:
+                                                            'flex',
+                                                        alignItems:
+                                                            'center',
+                                                        gap: 7,
+                                                    }}
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        className="btn secondary"
+                                                        disabled={
+                                                            saving ||
+                                                            required <=
+                                                                Math.max(
+                                                                    1,
+                                                                    assigned,
+                                                                )
+                                                        }
+                                                        onClick={() =>
+                                                            void changeRequiredCount(
+                                                                row,
+                                                                required -
+                                                                    1,
+                                                            )
+                                                        }
+                                                    >
+                                                        −
+                                                    </button>
+
+                                                    <strong
+                                                        style={{
+                                                            minWidth:
+                                                                30,
+                                                            textAlign:
+                                                                'center',
+                                                            fontSize:
+                                                                18,
+                                                        }}
+                                                    >
+                                                        {
+                                                            required
+                                                        }
+                                                    </strong>
+
+                                                    <button
+                                                        type="button"
+                                                        className="btn secondary"
+                                                        disabled={
+                                                            saving
+                                                        }
+                                                        onClick={() =>
+                                                            void changeRequiredCount(
+                                                                row,
+                                                                required +
+                                                                    1,
+                                                            )
+                                                        }
+                                                    >
+                                                        +
+                                                    </button>
+                                                </div>
+                                            </td>
+
+
+                                            <td>
                                                 {
-                                                    row.promoter_id
+                                                    row.assigned_count
                                                 }
-                                            </code>
-                                        </td>
+                                            </td>
 
-                                        <td>
-                                            <b>
+                                            <td>
                                                 {
-                                                    row.promoter_name
+                                                    row.completed_count
                                                 }
-                                            </b>
-                                        </td>
+                                            </td>
 
-                                        <td>
-                                            {
-                                                row.required_count
-                                            }
-                                        </td>
+                                            <td>
+                                                <strong>
+                                                    {
+                                                        row.remaining_to_assign
+                                                    }
+                                                </strong>
+                                            </td>
 
-                                        <td>
-                                            {
-                                                row.assigned_count
-                                            }
-                                        </td>
 
-                                        <td>
-                                            {
-                                                row.completed_count
-                                            }
-                                        </td>
-
-                                        <td>
-                                            <strong>
-                                                {
-                                                    row.remaining_to_assign
-                                                }
-                                            </strong>
-                                        </td>
-
-                                        <td>
-                                            {
-                                                row.remaining_to_complete
-                                            }
-                                        </td>
-                                    </tr>
-                                ),
+                                            <td>
+                                                <button
+                                                    type="button"
+                                                    className="btn secondary"
+                                                    disabled={
+                                                        assigned >
+                                                        0
+                                                    }
+                                                    onClick={() =>
+                                                        void removePromoter(
+                                                            row,
+                                                        )
+                                                    }
+                                                >
+                                                    删除
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    )
+                                },
                             )}
                         </Table>
                     </div>
@@ -1210,46 +1730,39 @@ function Allocation({ notify }: { notify: any }) {
                     planRows.length ===
                         0 && (
                     <div className="empty-hint">
-                        这一周还没有导入推广员质检计划
+                        这一周还没有质检计划。请先导入 CSV。
                     </div>
                 )}
             </Panel>
 
 
             {/* ================================================= */}
-            {/* 质检员产能 */}
+            {/* INSPECTOR CAPACITY */}
             {/* ================================================= */}
 
-            <Panel title="设置每位质检员">
+            <Panel title="质检员本次任务">
                 <div className="allocation-list">
                     {inspectors.map(
-                        (
-                            inspector,
-                        ) => (
+                        (i) => (
                             <div
                                 className="allocation-row"
-                                key={
-                                    inspector.id
-                                }
+                                key={i.id}
                             >
                                 <div className="avatar">
                                     {
-                                        inspector
-                                            .nickname[0]
+                                        i.nickname[0]
                                     }
                                 </div>
 
                                 <div className="grow">
                                     <b>
                                         {
-                                            inspector.nickname
+                                            i.nickname
                                         }
                                     </b>
 
                                     <span>
-                                        {
-                                            inspector.id
-                                        }
+                                        {i.id}
                                     </span>
                                 </div>
 
@@ -1260,22 +1773,19 @@ function Allocation({ notify }: { notify: any }) {
                                     <input
                                         value={
                                             phones[
-                                                inspector
-                                                    .id
+                                                i.id
                                             ] ||
                                             ''
                                         }
-                                        onChange={(
-                                            event,
-                                        ) => {
+                                        onChange={(e) => {
                                             setPhones(
                                                 (
-                                                    current,
+                                                    old,
                                                 ) => ({
-                                                    ...current,
+                                                    ...old,
 
-                                                    [inspector.id]:
-                                                        event
+                                                    [i.id]:
+                                                        e
                                                             .target
                                                             .value,
                                                 }),
@@ -1297,25 +1807,22 @@ function Allocation({ notify }: { notify: any }) {
                                         min="0"
                                         value={
                                             counts[
-                                                inspector
-                                                    .id
+                                                i.id
                                             ] ||
                                             0
                                         }
-                                        onChange={(
-                                            event,
-                                        ) => {
+                                        onChange={(e) => {
                                             setCounts(
                                                 (
-                                                    current,
+                                                    old,
                                                 ) => ({
-                                                    ...current,
+                                                    ...old,
 
-                                                    [inspector.id]:
+                                                    [i.id]:
                                                         Math.max(
                                                             0,
                                                             Number(
-                                                                event
+                                                                e
                                                                     .target
                                                                     .value,
                                                             ),
@@ -1335,10 +1842,6 @@ function Allocation({ notify }: { notify: any }) {
                 </div>
 
 
-                {/* ============================================= */}
-                {/* 需求 vs 产能 */}
-                {/* ============================================= */}
-
                 <div
                     style={{
                         marginTop: 18,
@@ -1347,127 +1850,120 @@ function Allocation({ notify }: { notify: any }) {
                             '1px solid #dfe6ef',
                         borderRadius: 14,
                         display: 'flex',
-                        alignItems:
-                            'center',
                         justifyContent:
                             'space-between',
-                        gap: 16,
+                        gap: 20,
                         flexWrap:
                             'wrap',
                     }}
                 >
                     <div>
-                        <div
-                            style={{
-                                color:
-                                    '#778196',
-                                fontSize: 13,
-                            }}
-                        >
-                            本周剩余待分配
-                        </div>
+                        <small>
+                            待分配需求
+                        </small>
 
-                        <strong
-                            style={{
-                                fontSize: 26,
-                            }}
-                        >
-                            {
-                                remainingToAssign
-                            }
-                        </strong>
-                    </div>
-
-
-                    <div>
-                        <div
-                            style={{
-                                color:
-                                    '#778196',
-                                fontSize: 13,
-                            }}
-                        >
-                            本次设置任务
-                        </div>
-
-                        <strong
-                            style={{
-                                fontSize: 26,
-                            }}
-                        >
-                            {
-                                requestedCapacity
-                            }
-                        </strong>
-                    </div>
-
-
-                    <div>
-                        <div
-                            style={{
-                                color:
-                                    '#778196',
-                                fontSize: 13,
-                            }}
-                        >
-                            本次分配后
-                        </div>
-
-                        <strong
-                            style={{
-                                fontSize: 26,
-                            }}
-                        >
-                            {Math.max(
-                                0,
-                                remainingToAssign -
-                                    requestedCapacity,
-                            )}
-                        </strong>
-                    </div>
-
-
-                    <div>
-                        {planRows.length ===
-                        0 ? (
-                            <span className="review-badge changes_requested">
-                                未导入计划
-                            </span>
-                        ) : capacityDifference >
-                          0 ? (
-                            <span className="review-badge changes_requested">
-                                超过剩余计划{' '}
+                        <div>
+                            <strong
+                                style={{
+                                    fontSize:
+                                        26,
+                                }}
+                            >
                                 {
-                                    capacityDifference
+                                    remainingToAssign
                                 }
-                            </span>
-                        ) : capacityDifference ===
-                          0 ? (
-                            <span className="review-badge approved">
-                                本次可全部分完
-                            </span>
-                        ) : (
-                            <span className="review-badge pending_review">
-                                分配后还剩{' '}
+                            </strong>
+                        </div>
+                    </div>
+
+
+                    <div>
+                        <small>
+                            本次质检员任务
+                        </small>
+
+                        <div>
+                            <strong
+                                style={{
+                                    fontSize:
+                                        26,
+                                }}
+                            >
                                 {
-                                    Math.abs(
-                                        capacityDifference,
-                                    )
+                                    requestedCapacity
                                 }
-                            </span>
-                        )}
+                            </strong>
+                        </div>
+                    </div>
+
+
+                    <div>
+                        <small>
+                            分配后剩余
+                        </small>
+
+                        <div>
+                            <strong
+                                style={{
+                                    fontSize:
+                                        26,
+                                }}
+                            >
+                                {Math.max(
+                                    0,
+                                    remainingToAssign -
+                                        requestedCapacity,
+                                )}
+                            </strong>
+                        </div>
                     </div>
                 </div>
 
 
-                {/* ============================================= */}
-                {/* 操作 */}
-                {/* ============================================= */}
+                {requestedCapacity >
+                    remainingToAssign &&
+                    remainingToAssign >
+                        0 && (
+                    <div
+                        style={{
+                            marginTop:
+                                12,
+                            padding:
+                                12,
+                            borderRadius:
+                                10,
+                            background:
+                                '#fff4f4',
+                        }}
+                    >
+                        ⚠️ 你设置了{' '}
+                        <b>
+                            {
+                                requestedCapacity
+                            }
+                        </b>{' '}
+                        个任务，但本周只剩{' '}
+                        <b>
+                            {
+                                remainingToAssign
+                            }
+                        </b>{' '}
+                        个待分配。需要减少{' '}
+                        <b>
+                            {requestedCapacity -
+                                remainingToAssign}
+                        </b>{' '}
+                        个。
+                    </div>
+                )}
+
 
                 <div className="panel-actions">
                     <button
                         className="btn secondary"
-                        onClick={make}
+                        onClick={() =>
+                            void make()
+                        }
                         disabled={
                             planRows.length ===
                                 0 ||
@@ -1476,7 +1972,6 @@ function Allocation({ notify }: { notify: any }) {
                         }
                     >
                         <Search />
-
                         预览分配
                     </button>
 
@@ -1484,11 +1979,12 @@ function Allocation({ notify }: { notify: any }) {
                     <button
                         className="btn primary"
                         disabled={
-                            !preview.length ||
+                            preview.length ===
+                                0 ||
                             confirming
                         }
-                        onClick={
-                            confirmAllocation
+                        onClick={() =>
+                            void confirmAllocation()
                         }
                     >
                         <Sparkles />
@@ -1502,13 +1998,13 @@ function Allocation({ notify }: { notify: any }) {
 
 
             {/* ================================================= */}
-            {/* 预览 */}
+            {/* PREVIEW */}
             {/* ================================================= */}
 
             {preview.length >
                 0 && (
                 <Panel
-                    title={`预览结果 · ${preview.length} 条`}
+                    title={`预览结果 · ${preview.length} 个任务`}
                 >
                     <div className="preview-grid">
                         {preview.map(
@@ -1521,17 +2017,24 @@ function Allocation({ notify }: { notify: any }) {
                                         index
                                     }
                                 >
-                                    <b>
-                                        {
-                                            item.inspector_name
-                                        }
-                                    </b>
+                                    <div>
+                                        <b>
+                                            {
+                                                item.inspector_name
+                                            }
+                                        </b>
 
-                                    <span>
-                                        {
-                                            item.phone
-                                        }
-                                    </span>
+                                        <span
+                                            style={{
+                                                display:
+                                                    'block',
+                                            }}
+                                        >
+                                            {
+                                                item.phone
+                                            }
+                                        </span>
+                                    </div>
 
                                     <ChevronRight />
 
@@ -1563,8 +2066,6 @@ function Allocation({ notify }: { notify: any }) {
         </>
     )
 }
-
-function Inspectors({notify}:{notify:any}){const [rows,setRows]=useState<Inspector[]>([]);const load=()=>supabase.from('inspectors').select('*').order('nickname').then(({data})=>setRows((data||[]) as Inspector[]));useEffect(()=>{void load()},[]);const importFile=async(f:File)=>{const parsed=parseCsv(await f.text()).map((r:any)=>({id:String(r.inspector_id||'').trim(),nickname:String(r.nickname||'').trim(),current_phone:String(r.current_phone||'').trim(),target_tasks:Number(r.target_tasks||0)})).filter(x=>x.id&&x.nickname&&x.current_phone);const {error}=await supabase.from('inspectors').upsert(parsed,{onConflict:'id'});if(error)return notify(error.message,'error');load();notify(`已导入 ${parsed.length} 位质检员`)};return <><PageHead title="质检员" text="CSV：inspector_id,nickname,current_phone,target_tasks。"><FileButton onFile={importFile}/></PageHead><div className="card-table">{rows.map(i=><article key={i.id}><div><code>{i.id}</code><h3>{i.nickname}</h3></div><div className="metric"><span>当前号码</span><b>{i.current_phone}</b></div><div className="metric"><span>本周目标</span><b>{i.target_tasks}</b></div></article>)}</div></>}
 
 function Tasks({profile,notify,go}:{profile:Profile;notify:any;go:(p:Page)=>void}){const [rows,setRows]=useState<Task[]>([]);const load=async()=>{let q=supabase.from('task_details').select('*').order('task_date',{ascending:false});if(profile.role==='inspector')q=q.eq('inspector_id',profile.user_id);if(profile.role==='promoter')q=q.eq('promoter_id',profile.user_id);const {data}=await q;setRows((data||[]) as Task[])};useEffect(()=>{load()},[profile]);const start=async(id:string)=>{const {error}=await supabase.from('tasks').update({status:'in_progress'}).eq('id',id).eq('status','pending');if(error)notify(error.message,'error');else{load();notify('任务已开始')}};return <><PageHead title={profile.role==='manager'?'质检任务':'我的任务'} text="未完成任务会在周结算时释放号码组合，但会保留未完成历史。"/ ><div className="task-grid">{rows.map(t=><article key={t.id}><div className="task-top"><span className={`status ${t.status}`}>{taskLabel[t.status]}</span><small>{t.task_date}</small></div><h3>{(t as any).promoter_name||t.promoter_id}</h3><dl><div><dt>质检员</dt><dd>{(t as any).inspector_name||t.inspector_id}</dd></div><div><dt>质检号码</dt><dd>{t.inspector_phone}</dd></div><div><dt>推广员ID</dt><dd>{t.promoter_id}</dd></div></dl>{(t as any).whatsapp&&<a className="btn secondary wide" href={(t as any).whatsapp} target="_blank" rel="noreferrer"><ExternalLink/>打开 WhatsApp</a>}{profile.role==='inspector'&&t.status==='pending'&&<button className="btn primary wide" onClick={()=>start(t.id)}>开始任务</button>}{profile.role==='inspector'&&['pending','in_progress','changes_requested'].includes(t.status)&&<button className="btn ghost wide" onClick={()=>{sessionStorage.setItem('open-task',t.id);go('reports')}}>填写 / 修改评价</button>}</article>)}</div></>}
 
