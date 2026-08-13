@@ -108,31 +108,17 @@ function Router({page,profile,notify,go}:{page:Page;profile:Profile;notify:any;g
 function Dashboard({profile,go}:{profile:Profile;go:(p:Page)=>void}){const [tasks,setTasks]=useState<Task[]>([]);const [reports,setReports]=useState<Report[]>([]);const [inspectors,setInspectors]=useState<Inspector[]>([]);const [myPromoter,setMyPromoter]=useState<Promoter|null>(null);const [reputationUrl,setReputationUrl]=useState('');useEffect(()=>{(async()=>{let tq=supabase.from('tasks').select('*').gte('task_date',weekStart());if(profile.role==='inspector')tq=tq.eq('inspector_id',profile.user_id);if(profile.role==='promoter')tq=tq.eq('promoter_id',profile.user_id);const [{data:t},{data:r},{data:i}]=await Promise.all([tq,profile.role==='manager'?supabase.from('reports').select('*').gte('submitted_at',weekStart()):supabase.from('reports').select('*').eq(profile.role==='inspector'?'inspector_id':'promoter_id',profile.user_id),profile.role==='manager'?supabase.from('inspectors').select('*'):Promise.resolve({data:[]})]);setTasks((t||[]) as Task[]);setReports((r||[]) as Report[]);setInspectors((i||[]) as Inspector[]);if(profile.role==='promoter'){const [{data:p},{data:settings}]=await Promise.all([supabase.from('promoters').select('*').eq('id',profile.user_id).single(),supabase.from('app_settings').select('reputation_query_url').eq('id',1).single()]);setMyPromoter((p||null) as Promoter|null);setReputationUrl(String(settings?.reputation_query_url||''))}})()},[profile]);const done=tasks.filter(t=>['submitted','approved','changes_requested'].includes(t.status)).length;const pendingReview=reports.filter(r=>r.review_status==='pending_review').length;if(profile.role==='manager'){return <><Hero title="本周运营概览" text="先看质检员完成情况，再处理待审核报告和未完成任务。" action={<button className="btn primary" onClick={()=>go('reports')}>进入报告中心</button>}/><div className="stat-grid four"><Stat label="本周任务" value={tasks.length} note="数据库实时统计"/><Stat label="已提交报告" value={done} note={`${tasks.length-done} 个未提交`}/><Stat label="待审核" value={pendingReview} note="按质检员分组处理"/><Stat label="质检员" value={inspectors.length} note="本周参与人员"/></div><InspectorProgress tasks={tasks} reports={reports} inspectors={inspectors}/></>};return <><Hero title={`你好，${profile.display_name}`} text={profile.role==='inspector'?'查看本周剩余任务并提交完整评价。':'查看自己的历史报告、排行榜和最终信誉积分。'} action={<button className="btn primary" onClick={()=>go(profile.role==='inspector'?'tasks':'reports')}>查看详情</button>}/>{profile.role==='promoter'&&<section className="reputation-hero-card"><div><span>当前信誉积分</span><strong>{myPromoter?.reputation_score??'—'}</strong><small>{myPromoter?.reputation_updated_at?`更新于 ${new Date(myPromoter.reputation_updated_at).toLocaleString('zh-CN')}`:'暂未导入信誉积分'}</small></div>{reputationUrl?<a className="btn primary" href={reputationUrl} target="_blank" rel="noreferrer"><ExternalLink/>查询信誉积分详情</a>:<button className="btn secondary" onClick={()=>go('reputation')}>查看信誉积分</button>}</section>}<div className="stat-grid three"><Stat label="本周任务" value={tasks.length} note="只显示当前账号"/><Stat label="已完成" value={done} note={`${tasks.length-done} 个未完成`}/><Stat label="报告数量" value={reports.length} note="永久保存于数据库"/></div></>}
 function InspectorProgress({tasks,reports,inspectors}:{tasks:Task[];reports:Report[];inspectors:Inspector[]}){return <Panel title="本周质检员进度"><div className="progress-list">{inspectors.map(i=>{const mine=tasks.filter(t=>t.inspector_id===i.id);const complete=mine.filter(t=>['submitted','approved','changes_requested'].includes(t.status)).length;const pending=reports.filter(r=>r.inspector_id===i.id&&r.review_status==='pending_review').length;const approved=reports.filter(r=>r.inspector_id===i.id&&r.review_status==='approved').length;return <article key={i.id}><div className="avatar">{i.nickname[0]}</div><div className="grow"><b>{i.nickname}</b><span>{complete}/{i.target_tasks} 已完成 · 剩余 {Math.max(0,i.target_tasks-complete)}</span><div className="progress"><i style={{width:`${Math.min(100,i.target_tasks?complete/i.target_tasks*100:0)}%`}}/></div></div><div className="review-count"><b>{pending}</b><span>待审核</span></div><div className="review-count success"><b>{approved}</b><span>已审核</span></div></article>})}</div></Panel>}
 
+// =========================================================
+// PROMOTERS
+// 恢复成普通推广员管理页
+// 不再显示“本周最多几次”
+// =========================================================
+
 function Promoters({ notify }: { notify: any }) {
     const [rows, setRows] = useState<Promoter[]>([])
     const [q, setQ] = useState('')
-    const [week, setWeek] = useState(weekStart())
 
-    const [limits, setLimits] = useState<Record<string, number>>({})
-    const [savingId, setSavingId] = useState<string | null>(null)
-
-    // =====================================================
-    // 周结束日期
-    // =====================================================
-
-    const weekEnd = useMemo(() => {
-        const date = new Date(`${week}T00:00:00`)
-        date.setDate(date.getDate() + 6)
-
-        return date.toISOString().slice(0, 10)
-    }, [week])
-
-
-    // =====================================================
-    // 加载推广员
-    // =====================================================
-
-    const loadPromoters = async () => {
+    const load = async () => {
         const { data, error } = await supabase
             .from('promoters')
             .select('*')
@@ -146,56 +132,24 @@ function Promoters({ notify }: { notify: any }) {
         setRows((data || []) as Promoter[])
     }
 
-
-    // =====================================================
-    // 加载这一周的特别额度
-    // 没有特别设置 = 1
-    // =====================================================
-
-    const loadLimits = async (selectedWeek = week) => {
-        const { data, error } = await supabase.rpc(
-            'get_weekly_promoter_limits',
-            {
-                p_week_start: selectedWeek,
-            },
-        )
-
-        if (error) {
-            notify(error.message, 'error')
-            return
-        }
-
-        const next: Record<string, number> = {}
-
-        for (const item of data || []) {
-            next[item.promoter_id] =
-                Number(item.inspection_limit) || 1
-        }
-
-        setLimits(next)
-    }
-
-
     useEffect(() => {
-        void loadPromoters()
+        void load()
     }, [])
-
-
-    useEffect(() => {
-        void loadLimits(week)
-    }, [week])
-
-
-    // =====================================================
-    // CSV 导入
-    // =====================================================
 
     const importFile = async (file: File) => {
         const parsed = parseCsv(await file.text())
             .map((row: any) => ({
-                id: String(row.promoter_id || '').trim(),
-                nickname: String(row.nickname || '').trim(),
-                whatsapp: String(row.whatsapp || '').trim(),
+                id: String(
+                    row.promoter_id || '',
+                ).trim(),
+
+                nickname: String(
+                    row.nickname || '',
+                ).trim(),
+
+                whatsapp: String(
+                    row.whatsapp || '',
+                ).trim(),
             }))
             .filter(
                 (item) =>
@@ -215,253 +169,55 @@ function Promoters({ notify }: { notify: any }) {
             return
         }
 
-        await loadPromoters()
-
-        notify(`已导入 ${parsed.length} 位推广员`)
-    }
-
-
-    // =====================================================
-    // 当前额度
-    // =====================================================
-
-    const getLimit = (promoterId: string) => {
-        return limits[promoterId] ?? 1
-    }
-
-
-    // =====================================================
-    // 保存额度
-    // =====================================================
-
-    const saveLimit = async (
-        promoterId: string,
-        newLimit: number,
-    ) => {
-        const safeLimit = Math.max(
-            1,
-            Math.floor(newLimit),
-        )
-
-        setSavingId(promoterId)
-
-        const { error } = await supabase.rpc(
-            'set_promoter_weekly_limit',
-            {
-                p_promoter_id: promoterId,
-                p_week_start: week,
-                p_inspection_limit: safeLimit,
-            },
-        )
-
-        setSavingId(null)
-
-        if (error) {
-            notify(error.message, 'error')
-            return
-        }
-
-        setLimits((current) => {
-            const next = { ...current }
-
-            if (safeLimit === 1) {
-                delete next[promoterId]
-            } else {
-                next[promoterId] = safeLimit
-            }
-
-            return next
-        })
+        await load()
 
         notify(
-            safeLimit === 1
-                ? '已恢复默认每周 1 次'
-                : `本周允许质检 ${safeLimit} 次`,
+            `已导入 ${parsed.length} 位推广员`,
         )
     }
 
-
-    const increaseLimit = (promoterId: string) => {
-        const current = getLimit(promoterId)
-
-        void saveLimit(
-            promoterId,
-            current + 1,
-        )
-    }
-
-
-    const decreaseLimit = (promoterId: string) => {
-        const current = getLimit(promoterId)
-
-        if (current <= 1) {
-            return
-        }
-
-        void saveLimit(
-            promoterId,
-            current - 1,
-        )
-    }
-
-
-    // =====================================================
-    // 搜索
-    // =====================================================
-
-    const visible = rows.filter((promoter) =>
-        `${promoter.id} ${promoter.nickname}`
-            .toLowerCase()
-            .includes(q.toLowerCase()),
+    const visible = rows.filter(
+        (promoter) =>
+            `${promoter.id} ${promoter.nickname}`
+                .toLowerCase()
+                .includes(
+                    q.toLowerCase(),
+                ),
     )
-
-
-    const specialCount = Object.values(limits).filter(
-        (value) => value > 1,
-    ).length
-
 
     return (
         <>
             <PageHead
                 title="推广员"
-                text="默认每个推广员每周最多质检 1 次，需要增加时单独设置"
+                text="管理推广员基础资料 本周质检要求请在智能分配页面导入"
             >
-                <div
-                    style={{
-                        display: 'flex',
-                        gap: 10,
-                        flexWrap: 'wrap',
-                        alignItems: 'center',
-                    }}
-                >
-                    <SearchBox
-                        value={q}
-                        onChange={setQ}
-                    />
+                <SearchBox
+                    value={q}
+                    onChange={setQ}
+                />
 
-                    <FileButton
-                        onFile={importFile}
-                    />
-                </div>
+                <FileButton
+                    onFile={importFile}
+                />
             </PageHead>
 
-
-            <Panel title="每周质检额度">
-                <div
-                    style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 16,
-                        flexWrap: 'wrap',
-                    }}
-                >
-                    <div>
-                        <div
-                            style={{
-                                fontSize: 13,
-                                color: '#778196',
-                                marginBottom: 5,
-                            }}
-                        >
-                            当前设置周
-                        </div>
-
-                        <div
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 10,
-                                flexWrap: 'wrap',
-                            }}
-                        >
-                            <input
-                                type="date"
-                                value={week}
-                                onChange={(event) =>
-                                    setWeek(
-                                        weekStart(
-                                            event.target.value,
-                                        ),
-                                    )
-                                }
-                            />
-
-                            <b>{week}</b>
-
-                            <span>至</span>
-
-                            <b>{weekEnd}</b>
-                        </div>
-                    </div>
-
-
-                    <div
-                        style={{
-                            padding: '10px 14px',
-                            borderRadius: 12,
-                            background: '#f5f7fa',
-                        }}
-                    >
-                        <span
-                            style={{
-                                display: 'block',
-                                color: '#778196',
-                                fontSize: 12,
-                            }}
-                        >
-                            本周特别设置
-                        </span>
-
-                        <strong
-                            style={{
-                                fontSize: 22,
-                            }}
-                        >
-                            {specialCount}
-                        </strong>
-
-                        <span> 人</span>
-                    </div>
-                </div>
-
-
-                <div
-                    style={{
-                        marginTop: 12,
-                        fontSize: 13,
-                        color: '#778196',
-                    }}
-                >
-                    没有特别设置的推广员自动按每周 1 次处理
-                </div>
-            </Panel>
-
-
             <div className="card-table">
-                {visible.map((promoter) => {
-                    const limit = getLimit(promoter.id)
-                    const saving =
-                        savingId === promoter.id
-
-                    return (
-                        <article key={promoter.id}>
-
-                            {/* 推广员资料 */}
-
+                {visible.map(
+                    (promoter) => (
+                        <article
+                            key={promoter.id}
+                        >
                             <div>
                                 <code>
                                     {promoter.id}
                                 </code>
 
                                 <h3>
-                                    {promoter.nickname}
+                                    {
+                                        promoter.nickname
+                                    }
                                 </h3>
                             </div>
-
-
-                            {/* 累计质检 */}
 
                             <div className="metric">
                                 <span>
@@ -469,127 +225,17 @@ function Promoters({ notify }: { notify: any }) {
                                 </span>
 
                                 <b>
-                                    {promoter.inspection_count}
+                                    {
+                                        promoter.inspection_count
+                                    }
                                 </b>
                             </div>
 
-
-                            {/* 本周额度 */}
-
-                            <div
-                                style={{
-                                    display: 'grid',
-                                    gap: 7,
-                                    minWidth: 190,
-                                }}
-                            >
-                                <span
-                                    style={{
-                                        fontSize: 12,
-                                        color: '#778196',
-                                    }}
-                                >
-                                    本周允许质检
-                                </span>
-
-
-                                <div
-                                    style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: 8,
-                                    }}
-                                >
-
-                                    <button
-                                        type="button"
-                                        className="btn secondary"
-                                        disabled={
-                                            saving ||
-                                            limit <= 1
-                                        }
-                                        onClick={() =>
-                                            decreaseLimit(
-                                                promoter.id,
-                                            )
-                                        }
-                                    >
-                                        −
-                                    </button>
-
-
-                                    <div
-                                        style={{
-                                            minWidth: 62,
-                                            textAlign: 'center',
-                                            padding: '8px 12px',
-                                            border:
-                                                limit > 1
-                                                    ? '1px solid #9bb6ff'
-                                                    : '1px solid #dfe6ef',
-                                            background:
-                                                limit > 1
-                                                    ? '#eef4ff'
-                                                    : '#ffffff',
-                                            borderRadius: 10,
-                                        }}
-                                    >
-                                        <strong
-                                            style={{
-                                                fontSize: 20,
-                                            }}
-                                        >
-                                            {limit}
-                                        </strong>
-
-                                        <small
-                                            style={{
-                                                marginLeft: 4,
-                                                color: '#778196',
-                                            }}
-                                        >
-                                            次
-                                        </small>
-                                    </div>
-
-
-                                    <button
-                                        type="button"
-                                        className="btn secondary"
-                                        disabled={saving}
-                                        onClick={() =>
-                                            increaseLimit(
-                                                promoter.id,
-                                            )
-                                        }
-                                    >
-                                        +
-                                    </button>
-                                </div>
-
-
-                                <small
-                                    style={{
-                                        color:
-                                            limit > 1
-                                                ? '#315efb'
-                                                : '#778196',
-                                    }}
-                                >
-                                    {saving
-                                        ? '保存中…'
-                                        : limit > 1
-                                          ? `特别设置：本周最多 ${limit} 次`
-                                          : '默认：本周最多 1 次'}
-                                </small>
-                            </div>
-
-
-                            {/* WhatsApp */}
-
                             <a
                                 className="btn secondary"
-                                href={promoter.whatsapp}
+                                href={
+                                    promoter.whatsapp
+                                }
                                 target="_blank"
                                 rel="noreferrer"
                             >
@@ -597,12 +243,10 @@ function Promoters({ notify }: { notify: any }) {
 
                                 打开 WhatsApp
                             </a>
-
                         </article>
-                    )
-                })}
+                    ),
+                )}
             </div>
-
 
             {visible.length === 0 && (
                 <div className="empty-hint">
@@ -612,9 +256,1315 @@ function Promoters({ notify }: { notify: any }) {
         </>
     )
 }
-function Inspectors({notify}:{notify:any}){const [rows,setRows]=useState<Inspector[]>([]);const load=()=>supabase.from('inspectors').select('*').order('nickname').then(({data})=>setRows((data||[]) as Inspector[]));useEffect(()=>{void load()},[]);const importFile=async(f:File)=>{const parsed=parseCsv(await f.text()).map((r:any)=>({id:String(r.inspector_id||'').trim(),nickname:String(r.nickname||'').trim(),current_phone:String(r.current_phone||'').trim(),target_tasks:Number(r.target_tasks||0)})).filter(x=>x.id&&x.nickname&&x.current_phone);const {error}=await supabase.from('inspectors').upsert(parsed,{onConflict:'id'});if(error)return notify(error.message,'error');load();notify(`已导入 ${parsed.length} 位质检员`)};return <><PageHead title="质检员" text="CSV：inspector_id,nickname,current_phone,target_tasks。"><FileButton onFile={importFile}/></PageHead><div className="card-table">{rows.map(i=><article key={i.id}><div><code>{i.id}</code><h3>{i.nickname}</h3></div><div className="metric"><span>当前号码</span><b>{i.current_phone}</b></div><div className="metric"><span>本周目标</span><b>{i.target_tasks}</b></div></article>)}</div></>}
 
-function Allocation({notify}:{notify:any}){const [inspectors,setInspectors]=useState<Inspector[]>([]);const [date,setDate]=useState(today());const [counts,setCounts]=useState<Record<string,number>>({});const [phones,setPhones]=useState<Record<string,string>>({});const [preview,setPreview]=useState<any[]>([]);useEffect(()=>{supabase.from('inspectors').select('*').order('nickname').then(({data})=>{const r=(data||[]) as Inspector[];setInspectors(r);setCounts(Object.fromEntries(r.map(x=>[x.id,x.target_tasks])));setPhones(Object.fromEntries(r.map(x=>[x.id,x.current_phone])))})},[]);const make=async()=>{const requests=inspectors.filter(i=>(counts[i.id]||0)>0).map(i=>({inspector_id:i.id,phone:phones[i.id],count:counts[i.id]}));const {data,error}=await supabase.rpc('preview_allocation',{p_task_date:date,p_requests:requests});if(error)return notify(error.message,'error');setPreview(data||[])};const confirm=async()=>{const requests=inspectors.filter(i=>(counts[i.id]||0)>0).map(i=>({inspector_id:i.id,phone:phones[i.id],count:counts[i.id]}));const {data,error}=await supabase.rpc('create_allocation_batch',{p_task_date:date,p_requests:requests});if(error)return notify(error.message,'error');setPreview([]);notify(`已生成 ${data?.created_count||0} 个任务；推广员累计次数尚未增加`)};return <><PageHead title="智能分配" text="分配时只占用“号码 + 推广员”；质检员提交报告后，推广员累计次数才 +1。"><label className="date-large">任务日期<input type="date" value={date} onChange={e=>setDate(e.target.value)}/></label></PageHead><Panel title="设置每位质检员"><div className="allocation-list">{inspectors.map(i=><div className="allocation-row" key={i.id}><div className="avatar">{i.nickname[0]}</div><div className="grow"><b>{i.nickname}</b><span>{i.id}</span></div><label>使用号码<input value={phones[i.id]||''} onChange={e=>setPhones(v=>({...v,[i.id]:e.target.value}))}/></label><label>任务数<input type="number" min="0" value={counts[i.id]||0} onChange={e=>setCounts(v=>({...v,[i.id]:Number(e.target.value)}))}/></label></div>)}</div><div className="panel-actions"><button className="btn secondary" onClick={make}><Search/>预览分配</button><button className="btn primary" disabled={!preview.length} onClick={confirm}><Sparkles/>确认生成</button></div></Panel>{preview.length>0&&<Panel title={`预览结果 · ${preview.length} 条`}><div className="preview-grid">{preview.map((x:any,i)=><article key={i}><b>{x.inspector_name}</b><span>{x.phone}</span><ChevronRight/><b>{x.promoter_name}</b><span>{x.promoter_id}</span></article>)}</div></Panel>}</>}
+
+
+// =========================================================
+// ALLOCATION
+//
+// 新逻辑
+//
+// A 导入本周必须质检的推广员和次数
+// B 设置每个质检员这次要拿多少任务
+// C 系统比较需求和产能
+// D 只分配计划中尚未分够的人
+// =========================================================
+
+function Allocation({ notify }: { notify: any }) {
+    const [inspectors, setInspectors] =
+        useState<Inspector[]>([])
+
+    const [date, setDate] =
+        useState(today())
+
+    const [counts, setCounts] =
+        useState<Record<string, number>>({})
+
+    const [phones, setPhones] =
+        useState<Record<string, string>>({})
+
+    const [preview, setPreview] =
+        useState<any[]>([])
+
+    const [planRows, setPlanRows] =
+        useState<any[]>([])
+
+    const [planLoading, setPlanLoading] =
+        useState(false)
+
+    const [importing, setImporting] =
+        useState(false)
+
+    const [confirming, setConfirming] =
+        useState(false)
+
+
+    // =====================================================
+    // 当前任务日期对应的星期一
+    // =====================================================
+
+    const week = useMemo(
+        () => weekStart(date),
+        [date],
+    )
+
+
+    // =====================================================
+    // 周日
+    // =====================================================
+
+    const weekEnd = useMemo(() => {
+        const d = new Date(
+            `${week}T00:00:00`,
+        )
+
+        d.setDate(
+            d.getDate() + 6,
+        )
+
+        return d
+            .toISOString()
+            .slice(0, 10)
+    }, [week])
+
+
+    // =====================================================
+    // 加载质检员
+    // =====================================================
+
+    const loadInspectors = async () => {
+        const { data, error } =
+            await supabase
+                .from('inspectors')
+                .select('*')
+                .order('nickname')
+
+        if (error) {
+            notify(
+                error.message,
+                'error',
+            )
+
+            return
+        }
+
+        const list =
+            (data || []) as Inspector[]
+
+        setInspectors(list)
+
+        setCounts(
+            Object.fromEntries(
+                list.map(
+                    (inspector) => [
+                        inspector.id,
+                        inspector.target_tasks,
+                    ],
+                ),
+            ),
+        )
+
+        setPhones(
+            Object.fromEntries(
+                list.map(
+                    (inspector) => [
+                        inspector.id,
+                        inspector.current_phone,
+                    ],
+                ),
+            ),
+        )
+    }
+
+
+    // =====================================================
+    // 加载本周计划状态
+    // =====================================================
+
+    const loadPlan = async () => {
+        setPlanLoading(true)
+
+        const { data, error } =
+            await supabase.rpc(
+                'get_weekly_inspection_plan_status',
+                {
+                    p_week_start:
+                        week,
+                },
+            )
+
+        setPlanLoading(false)
+
+        if (error) {
+            notify(
+                error.message,
+                'error',
+            )
+
+            return
+        }
+
+        setPlanRows(
+            data || [],
+        )
+    }
+
+
+    useEffect(() => {
+        void loadInspectors()
+    }, [])
+
+
+    useEffect(() => {
+        setPreview([])
+
+        void loadPlan()
+    }, [week])
+
+
+    // =====================================================
+    // 导入本周计划 CSV
+    //
+    // 格式：
+    //
+    // promoter_id,required_count
+    // 10001,1
+    // 10002,3
+    // 10003,2
+    //
+    // 同一周重新导入
+    // = 用新 CSV 替换本周计划
+    // =====================================================
+
+    const importWeeklyPlan = async (
+        file: File,
+    ) => {
+        setImporting(true)
+
+        try {
+            const raw =
+                parseCsv(
+                    await file.text(),
+                )
+
+
+            const parsed = raw
+                .map(
+                    (row: any) => ({
+                        promoter_id:
+                            String(
+                                row.promoter_id ||
+                                    '',
+                            ).trim(),
+
+                        required_count:
+                            Number(
+                                row.required_count,
+                            ),
+                    }),
+                )
+                .filter(
+                    (row) =>
+                        row.promoter_id,
+                )
+
+
+            if (
+                parsed.length === 0
+            ) {
+                notify(
+                    'CSV 没有有效推广员',
+                    'error',
+                )
+
+                return
+            }
+
+
+            const invalid =
+                parsed.find(
+                    (row) =>
+                        !Number.isInteger(
+                            row.required_count,
+                        ) ||
+                        row.required_count <
+                            1,
+                )
+
+
+            if (invalid) {
+                notify(
+                    `推广员 ${invalid.promoter_id} 的 required_count 无效`,
+                    'error',
+                )
+
+                return
+            }
+
+
+            const duplicateIds =
+                parsed
+                    .map(
+                        (row) =>
+                            row.promoter_id,
+                    )
+                    .filter(
+                        (
+                            id,
+                            index,
+                            arr,
+                        ) =>
+                            arr.indexOf(
+                                id,
+                            ) !==
+                            index,
+                    )
+
+
+            if (
+                duplicateIds.length >
+                0
+            ) {
+                notify(
+                    `CSV 有重复推广员 ID：${duplicateIds[0]}`,
+                    'error',
+                )
+
+                return
+            }
+
+
+            const confirmed =
+                window.confirm(
+                    `确定导入 ${week} 至 ${weekEnd} 的质检计划吗\n\n本次共 ${parsed.length} 位推广员\n同一周旧计划会被新 CSV 替换`,
+                )
+
+
+            if (!confirmed) {
+                return
+            }
+
+
+            const {
+                data,
+                error,
+            } = await supabase.rpc(
+                'replace_weekly_inspection_plan',
+                {
+                    p_week_start:
+                        week,
+
+                    p_rows:
+                        parsed,
+                },
+            )
+
+
+            if (error) {
+                notify(
+                    error.message,
+                    'error',
+                )
+
+                return
+            }
+
+
+            setPreview([])
+
+            await loadPlan()
+
+
+            notify(
+                `已导入 ${data?.promoter_count || parsed.length} 位推广员 共需要 ${data?.total_required || 0} 次质检`,
+            )
+        } finally {
+            setImporting(false)
+        }
+    }
+
+
+    // =====================================================
+    // 汇总数字
+    // =====================================================
+
+    const totalPromoters =
+        planRows.length
+
+
+    const totalRequired =
+        planRows.reduce(
+            (
+                sum,
+                row,
+            ) =>
+                sum +
+                Number(
+                    row.required_count ||
+                        0,
+                ),
+            0,
+        )
+
+
+    const totalAssigned =
+        planRows.reduce(
+            (
+                sum,
+                row,
+            ) =>
+                sum +
+                Number(
+                    row.assigned_count ||
+                        0,
+                ),
+            0,
+        )
+
+
+    const totalCompleted =
+        planRows.reduce(
+            (
+                sum,
+                row,
+            ) =>
+                sum +
+                Number(
+                    row.completed_count ||
+                        0,
+                ),
+            0,
+        )
+
+
+    const remainingToAssign =
+        planRows.reduce(
+            (
+                sum,
+                row,
+            ) =>
+                sum +
+                Number(
+                    row.remaining_to_assign ||
+                        0,
+                ),
+            0,
+        )
+
+
+    const remainingToComplete =
+        planRows.reduce(
+            (
+                sum,
+                row,
+            ) =>
+                sum +
+                Number(
+                    row.remaining_to_complete ||
+                        0,
+                ),
+            0,
+        )
+
+
+    // =====================================================
+    // 本次质检员设置的总任务数量
+    // =====================================================
+
+    const requestedCapacity =
+        inspectors.reduce(
+            (
+                sum,
+                inspector,
+            ) =>
+                sum +
+                Math.max(
+                    0,
+                    Number(
+                        counts[
+                            inspector.id
+                        ] || 0,
+                    ),
+                ),
+            0,
+        )
+
+
+    // =====================================================
+    // 状态
+    // =====================================================
+
+    const capacityDifference =
+        requestedCapacity -
+        remainingToAssign
+
+
+    // =====================================================
+    // 生成 RPC requests
+    // =====================================================
+
+    const buildRequests = () =>
+        inspectors
+            .filter(
+                (inspector) =>
+                    Number(
+                        counts[
+                            inspector.id
+                        ] || 0,
+                    ) > 0,
+            )
+            .map(
+                (inspector) => ({
+                    inspector_id:
+                        inspector.id,
+
+                    phone:
+                        String(
+                            phones[
+                                inspector.id
+                            ] || '',
+                        ).trim(),
+
+                    count:
+                        Number(
+                            counts[
+                                inspector.id
+                            ] || 0,
+                        ),
+                }),
+            )
+
+
+    // =====================================================
+    // 前端基础检查
+    // =====================================================
+
+    const validateAllocation =
+        () => {
+            if (
+                planRows.length ===
+                0
+            ) {
+                notify(
+                    '请先导入这一周的推广员质检计划',
+                    'error',
+                )
+
+                return false
+            }
+
+
+            if (
+                remainingToAssign <=
+                0
+            ) {
+                notify(
+                    '本周计划已经全部分配完成',
+                    'error',
+                )
+
+                return false
+            }
+
+
+            if (
+                requestedCapacity <=
+                0
+            ) {
+                notify(
+                    '请设置质检员任务数量',
+                    'error',
+                )
+
+                return false
+            }
+
+
+            if (
+                requestedCapacity >
+                remainingToAssign
+            ) {
+                notify(
+                    `本次设置 ${requestedCapacity} 个任务 但计划只剩 ${remainingToAssign} 个待分配`,
+                    'error',
+                )
+
+                return false
+            }
+
+
+            for (
+                const inspector of
+                inspectors
+            ) {
+                const count =
+                    Number(
+                        counts[
+                            inspector.id
+                        ] || 0,
+                    )
+
+
+                if (
+                    count > 0 &&
+                    !String(
+                        phones[
+                            inspector.id
+                        ] || '',
+                    ).trim()
+                ) {
+                    notify(
+                        `${inspector.nickname} 没有填写质检号码`,
+                        'error',
+                    )
+
+                    return false
+                }
+            }
+
+
+            return true
+        }
+
+
+    // =====================================================
+    // 预览
+    // =====================================================
+
+    const make = async () => {
+        if (
+            !validateAllocation()
+        ) {
+            return
+        }
+
+
+        const requests =
+            buildRequests()
+
+
+        const { data, error } =
+            await supabase.rpc(
+                'preview_allocation',
+                {
+                    p_task_date:
+                        date,
+
+                    p_requests:
+                        requests,
+                },
+            )
+
+
+        if (error) {
+            notify(
+                error.message,
+                'error',
+            )
+
+            return
+        }
+
+
+        setPreview(
+            data || [],
+        )
+
+
+        notify(
+            `已预览 ${data?.length || 0} 个任务`,
+        )
+    }
+
+
+    // =====================================================
+    // 正式生成
+    // =====================================================
+
+    const confirmAllocation =
+        async () => {
+            if (
+                preview.length ===
+                0
+            ) {
+                notify(
+                    '请先预览分配',
+                    'error',
+                )
+
+                return
+            }
+
+
+            const confirmed =
+                window.confirm(
+                    `确定生成 ${preview.length} 个质检任务吗`,
+                )
+
+
+            if (!confirmed) {
+                return
+            }
+
+
+            setConfirming(true)
+
+
+            try {
+                const requests =
+                    buildRequests()
+
+
+                const {
+                    data,
+                    error,
+                } =
+                    await supabase.rpc(
+                        'create_allocation_batch',
+                        {
+                            p_task_date:
+                                date,
+
+                            p_requests:
+                                requests,
+                        },
+                    )
+
+
+                if (error) {
+                    notify(
+                        error.message,
+                        'error',
+                    )
+
+                    return
+                }
+
+
+                setPreview([])
+
+                await loadPlan()
+
+
+                notify(
+                    `已生成 ${data?.created_count || 0} 个任务`,
+                )
+            } finally {
+                setConfirming(false)
+            }
+        }
+
+
+    return (
+        <>
+            {/* ================================================= */}
+            {/* 页面头 */}
+            {/* ================================================= */}
+
+            <PageHead
+                title="智能分配"
+                text="先导入本周必须质检的推广员和次数 再设置每位质检员的任务数量"
+            >
+                <label className="date-large">
+                    任务日期
+
+                    <input
+                        type="date"
+                        value={date}
+                        onChange={(
+                            event,
+                        ) =>
+                            setDate(
+                                event
+                                    .target
+                                    .value,
+                            )
+                        }
+                    />
+                </label>
+            </PageHead>
+
+
+            {/* ================================================= */}
+            {/* 本周计划 */}
+            {/* ================================================= */}
+
+            <Panel title="本周推广员质检计划">
+                <div
+                    style={{
+                        display: 'flex',
+                        justifyContent:
+                            'space-between',
+                        alignItems:
+                            'center',
+                        gap: 16,
+                        flexWrap:
+                            'wrap',
+                    }}
+                >
+                    <div>
+                        <b>
+                            {week}
+                        </b>
+
+                        <span>
+                            {' '}
+                            至{' '}
+                        </span>
+
+                        <b>
+                            {weekEnd}
+                        </b>
+
+                        <p
+                            style={{
+                                margin:
+                                    '6px 0 0',
+                                color:
+                                    '#778196',
+                                fontSize: 13,
+                            }}
+                        >
+                            CSV 格式 promoter_id,required_count
+                        </p>
+                    </div>
+
+
+                    <label
+                        className="btn secondary file-btn"
+                    >
+                        <Upload />
+
+                        {importing
+                            ? '正在导入…'
+                            : '导入本周质检计划'}
+
+                        <input
+                            type="file"
+                            accept=".csv,text/csv"
+                            disabled={
+                                importing
+                            }
+                            onChange={(
+                                event,
+                            ) => {
+                                const file =
+                                    event
+                                        .target
+                                        .files?.[0]
+
+                                if (file) {
+                                    void importWeeklyPlan(
+                                        file,
+                                    )
+                                }
+
+                                event.target.value =
+                                    ''
+                            }}
+                        />
+                    </label>
+                </div>
+
+
+                {/* ============================================= */}
+                {/* 本周数字 */}
+                {/* ============================================= */}
+
+                <div
+                    className="stat-grid four"
+                    style={{
+                        marginTop: 18,
+                    }}
+                >
+                    <Stat
+                        label="计划推广员"
+                        value={
+                            planLoading
+                                ? '…'
+                                : totalPromoters
+                        }
+                        note="本周名单人数"
+                    />
+
+                    <Stat
+                        label="计划质检"
+                        value={
+                            planLoading
+                                ? '…'
+                                : totalRequired
+                        }
+                        note="必须完成的总次数"
+                    />
+
+                    <Stat
+                        label="已分配"
+                        value={
+                            planLoading
+                                ? '…'
+                                : totalAssigned
+                        }
+                        note={`待分配 ${remainingToAssign}`}
+                    />
+
+                    <Stat
+                        label="已完成"
+                        value={
+                            planLoading
+                                ? '…'
+                                : totalCompleted
+                        }
+                        note={`还差 ${remainingToComplete}`}
+                    />
+                </div>
+
+
+                {/* ============================================= */}
+                {/* 计划列表 */}
+                {/* ============================================= */}
+
+                {planRows.length >
+                    0 && (
+                    <div
+                        style={{
+                            marginTop:
+                                20,
+                        }}
+                    >
+                        <Table
+                            headers={[
+                                '推广员ID',
+                                '推广员',
+                                '本周要求',
+                                '已分配',
+                                '已完成',
+                                '待分配',
+                                '待完成',
+                            ]}
+                        >
+                            {planRows.map(
+                                (
+                                    row,
+                                ) => (
+                                    <tr
+                                        key={
+                                            row.promoter_id
+                                        }
+                                    >
+                                        <td>
+                                            <code>
+                                                {
+                                                    row.promoter_id
+                                                }
+                                            </code>
+                                        </td>
+
+                                        <td>
+                                            <b>
+                                                {
+                                                    row.promoter_name
+                                                }
+                                            </b>
+                                        </td>
+
+                                        <td>
+                                            {
+                                                row.required_count
+                                            }
+                                        </td>
+
+                                        <td>
+                                            {
+                                                row.assigned_count
+                                            }
+                                        </td>
+
+                                        <td>
+                                            {
+                                                row.completed_count
+                                            }
+                                        </td>
+
+                                        <td>
+                                            <strong>
+                                                {
+                                                    row.remaining_to_assign
+                                                }
+                                            </strong>
+                                        </td>
+
+                                        <td>
+                                            {
+                                                row.remaining_to_complete
+                                            }
+                                        </td>
+                                    </tr>
+                                ),
+                            )}
+                        </Table>
+                    </div>
+                )}
+
+
+                {!planLoading &&
+                    planRows.length ===
+                        0 && (
+                    <div className="empty-hint">
+                        这一周还没有导入推广员质检计划
+                    </div>
+                )}
+            </Panel>
+
+
+            {/* ================================================= */}
+            {/* 质检员产能 */}
+            {/* ================================================= */}
+
+            <Panel title="设置每位质检员">
+                <div className="allocation-list">
+                    {inspectors.map(
+                        (
+                            inspector,
+                        ) => (
+                            <div
+                                className="allocation-row"
+                                key={
+                                    inspector.id
+                                }
+                            >
+                                <div className="avatar">
+                                    {
+                                        inspector
+                                            .nickname[0]
+                                    }
+                                </div>
+
+                                <div className="grow">
+                                    <b>
+                                        {
+                                            inspector.nickname
+                                        }
+                                    </b>
+
+                                    <span>
+                                        {
+                                            inspector.id
+                                        }
+                                    </span>
+                                </div>
+
+
+                                <label>
+                                    使用号码
+
+                                    <input
+                                        value={
+                                            phones[
+                                                inspector
+                                                    .id
+                                            ] ||
+                                            ''
+                                        }
+                                        onChange={(
+                                            event,
+                                        ) => {
+                                            setPhones(
+                                                (
+                                                    current,
+                                                ) => ({
+                                                    ...current,
+
+                                                    [inspector.id]:
+                                                        event
+                                                            .target
+                                                            .value,
+                                                }),
+                                            )
+
+                                            setPreview(
+                                                [],
+                                            )
+                                        }}
+                                    />
+                                </label>
+
+
+                                <label>
+                                    本次任务数
+
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        value={
+                                            counts[
+                                                inspector
+                                                    .id
+                                            ] ||
+                                            0
+                                        }
+                                        onChange={(
+                                            event,
+                                        ) => {
+                                            setCounts(
+                                                (
+                                                    current,
+                                                ) => ({
+                                                    ...current,
+
+                                                    [inspector.id]:
+                                                        Math.max(
+                                                            0,
+                                                            Number(
+                                                                event
+                                                                    .target
+                                                                    .value,
+                                                            ),
+                                                        ),
+                                                }),
+                                            )
+
+                                            setPreview(
+                                                [],
+                                            )
+                                        }}
+                                    />
+                                </label>
+                            </div>
+                        ),
+                    )}
+                </div>
+
+
+                {/* ============================================= */}
+                {/* 需求 vs 产能 */}
+                {/* ============================================= */}
+
+                <div
+                    style={{
+                        marginTop: 18,
+                        padding: 16,
+                        border:
+                            '1px solid #dfe6ef',
+                        borderRadius: 14,
+                        display: 'flex',
+                        alignItems:
+                            'center',
+                        justifyContent:
+                            'space-between',
+                        gap: 16,
+                        flexWrap:
+                            'wrap',
+                    }}
+                >
+                    <div>
+                        <div
+                            style={{
+                                color:
+                                    '#778196',
+                                fontSize: 13,
+                            }}
+                        >
+                            本周剩余待分配
+                        </div>
+
+                        <strong
+                            style={{
+                                fontSize: 26,
+                            }}
+                        >
+                            {
+                                remainingToAssign
+                            }
+                        </strong>
+                    </div>
+
+
+                    <div>
+                        <div
+                            style={{
+                                color:
+                                    '#778196',
+                                fontSize: 13,
+                            }}
+                        >
+                            本次设置任务
+                        </div>
+
+                        <strong
+                            style={{
+                                fontSize: 26,
+                            }}
+                        >
+                            {
+                                requestedCapacity
+                            }
+                        </strong>
+                    </div>
+
+
+                    <div>
+                        <div
+                            style={{
+                                color:
+                                    '#778196',
+                                fontSize: 13,
+                            }}
+                        >
+                            本次分配后
+                        </div>
+
+                        <strong
+                            style={{
+                                fontSize: 26,
+                            }}
+                        >
+                            {Math.max(
+                                0,
+                                remainingToAssign -
+                                    requestedCapacity,
+                            )}
+                        </strong>
+                    </div>
+
+
+                    <div>
+                        {planRows.length ===
+                        0 ? (
+                            <span className="review-badge changes_requested">
+                                未导入计划
+                            </span>
+                        ) : capacityDifference >
+                          0 ? (
+                            <span className="review-badge changes_requested">
+                                超过剩余计划{' '}
+                                {
+                                    capacityDifference
+                                }
+                            </span>
+                        ) : capacityDifference ===
+                          0 ? (
+                            <span className="review-badge approved">
+                                本次可全部分完
+                            </span>
+                        ) : (
+                            <span className="review-badge pending_review">
+                                分配后还剩{' '}
+                                {
+                                    Math.abs(
+                                        capacityDifference,
+                                    )
+                                }
+                            </span>
+                        )}
+                    </div>
+                </div>
+
+
+                {/* ============================================= */}
+                {/* 操作 */}
+                {/* ============================================= */}
+
+                <div className="panel-actions">
+                    <button
+                        className="btn secondary"
+                        onClick={make}
+                        disabled={
+                            planRows.length ===
+                                0 ||
+                            remainingToAssign ===
+                                0
+                        }
+                    >
+                        <Search />
+
+                        预览分配
+                    </button>
+
+
+                    <button
+                        className="btn primary"
+                        disabled={
+                            !preview.length ||
+                            confirming
+                        }
+                        onClick={
+                            confirmAllocation
+                        }
+                    >
+                        <Sparkles />
+
+                        {confirming
+                            ? '正在生成…'
+                            : '确认生成'}
+                    </button>
+                </div>
+            </Panel>
+
+
+            {/* ================================================= */}
+            {/* 预览 */}
+            {/* ================================================= */}
+
+            {preview.length >
+                0 && (
+                <Panel
+                    title={`预览结果 · ${preview.length} 条`}
+                >
+                    <div className="preview-grid">
+                        {preview.map(
+                            (
+                                item: any,
+                                index,
+                            ) => (
+                                <article
+                                    key={
+                                        index
+                                    }
+                                >
+                                    <b>
+                                        {
+                                            item.inspector_name
+                                        }
+                                    </b>
+
+                                    <span>
+                                        {
+                                            item.phone
+                                        }
+                                    </span>
+
+                                    <ChevronRight />
+
+                                    <div>
+                                        <b>
+                                            {
+                                                item.promoter_name
+                                            }
+                                        </b>
+
+                                        <span
+                                            style={{
+                                                display:
+                                                    'block',
+                                            }}
+                                        >
+                                            ID{' '}
+                                            {
+                                                item.promoter_id
+                                            }
+                                        </span>
+                                    </div>
+                                </article>
+                            ),
+                        )}
+                    </div>
+                </Panel>
+            )}
+        </>
+    )
+}
+
+function Inspectors({notify}:{notify:any}){const [rows,setRows]=useState<Inspector[]>([]);const load=()=>supabase.from('inspectors').select('*').order('nickname').then(({data})=>setRows((data||[]) as Inspector[]));useEffect(()=>{void load()},[]);const importFile=async(f:File)=>{const parsed=parseCsv(await f.text()).map((r:any)=>({id:String(r.inspector_id||'').trim(),nickname:String(r.nickname||'').trim(),current_phone:String(r.current_phone||'').trim(),target_tasks:Number(r.target_tasks||0)})).filter(x=>x.id&&x.nickname&&x.current_phone);const {error}=await supabase.from('inspectors').upsert(parsed,{onConflict:'id'});if(error)return notify(error.message,'error');load();notify(`已导入 ${parsed.length} 位质检员`)};return <><PageHead title="质检员" text="CSV：inspector_id,nickname,current_phone,target_tasks。"><FileButton onFile={importFile}/></PageHead><div className="card-table">{rows.map(i=><article key={i.id}><div><code>{i.id}</code><h3>{i.nickname}</h3></div><div className="metric"><span>当前号码</span><b>{i.current_phone}</b></div><div className="metric"><span>本周目标</span><b>{i.target_tasks}</b></div></article>)}</div></>}
 
 function Tasks({profile,notify,go}:{profile:Profile;notify:any;go:(p:Page)=>void}){const [rows,setRows]=useState<Task[]>([]);const load=async()=>{let q=supabase.from('task_details').select('*').order('task_date',{ascending:false});if(profile.role==='inspector')q=q.eq('inspector_id',profile.user_id);if(profile.role==='promoter')q=q.eq('promoter_id',profile.user_id);const {data}=await q;setRows((data||[]) as Task[])};useEffect(()=>{load()},[profile]);const start=async(id:string)=>{const {error}=await supabase.from('tasks').update({status:'in_progress'}).eq('id',id).eq('status','pending');if(error)notify(error.message,'error');else{load();notify('任务已开始')}};return <><PageHead title={profile.role==='manager'?'质检任务':'我的任务'} text="未完成任务会在周结算时释放号码组合，但会保留未完成历史。"/ ><div className="task-grid">{rows.map(t=><article key={t.id}><div className="task-top"><span className={`status ${t.status}`}>{taskLabel[t.status]}</span><small>{t.task_date}</small></div><h3>{(t as any).promoter_name||t.promoter_id}</h3><dl><div><dt>质检员</dt><dd>{(t as any).inspector_name||t.inspector_id}</dd></div><div><dt>质检号码</dt><dd>{t.inspector_phone}</dd></div><div><dt>推广员ID</dt><dd>{t.promoter_id}</dd></div></dl>{(t as any).whatsapp&&<a className="btn secondary wide" href={(t as any).whatsapp} target="_blank" rel="noreferrer"><ExternalLink/>打开 WhatsApp</a>}{profile.role==='inspector'&&t.status==='pending'&&<button className="btn primary wide" onClick={()=>start(t.id)}>开始任务</button>}{profile.role==='inspector'&&['pending','in_progress','changes_requested'].includes(t.status)&&<button className="btn ghost wide" onClick={()=>{sessionStorage.setItem('open-task',t.id);go('reports')}}>填写 / 修改评价</button>}</article>)}</div></>}
 
