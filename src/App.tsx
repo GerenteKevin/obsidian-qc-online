@@ -10,9 +10,42 @@ type Toast={kind:'ok'|'error';text:string}|null;
 const roleLabel:Record<Role,string>={manager:'经理',inspector:'质检员',promoter:'推广员'};
 const taskLabel:Record<TaskStatus,string>={pending:'待执行',in_progress:'进行中',submitted:'待审核',approved:'审核通过',changes_requested:'需要修改',weekly_unfinished:'本周未完成',cancelled:'已取消'};
 const reviewLabel:Record<ReviewStatus,string>={pending_review:'待审核',approved:'审核通过',changes_requested:'需要修改'};
-const today=()=>new Date().toISOString().slice(0,10);
-const weekStart=(date=today())=>{const d=new Date(`${date}T00:00:00`);const day=(d.getDay()+6)%7;d.setDate(d.getDate()-day);return d.toISOString().slice(0,10)};
-const monthStart=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`};
+const today = () => {
+    const d = new Date()
+
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+
+    return `${y}-${m}-${day}`
+}
+
+const weekStart = (date = today()) => {
+    const [year, month, day] = date
+        .split('-')
+        .map(Number)
+
+    const d = new Date(year, month - 1, day)
+
+    // Monday = start of week
+    const weekday = (d.getDay() + 6) % 7
+
+    d.setDate(d.getDate() - weekday)
+
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+
+    return `${y}-${m}-${dd}`
+}
+
+const monthStart = () => {
+    const d = new Date()
+
+    return `${d.getFullYear()}-${String(
+        d.getMonth() + 1
+    ).padStart(2, '0')}-01`
+}
 const nav:Record<Role,{id:Page;label:string;icon:any}[]>={
  manager:[['dashboard','运营总览',LayoutDashboard],['allocation','分配任务',Sparkles],['tasks','质检任务',ClipboardCheck],['reports','报告中心',FileText],['settlement','每周结算',Archive],['promoters','推广员',Users],['inspectors','质检员',UserCog],['leaderboard','排行榜',BarChart3],['reputation','信誉积分',Gauge],['accounts','登录账号',ShieldCheck],['settings','系统设置',Settings]].map(([id,label,icon])=>({id:id as Page,label:label as string,icon})),
  inspector:[['dashboard','我的工作台',Gauge],['tasks','我的任务',ClipboardCheck],['reports','我的报告',FileText]].map(([id,label,icon])=>({id:id as Page,label:label as string,icon})),
