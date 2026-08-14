@@ -473,6 +473,11 @@ function Allocation({ notify }: { notify: any }) {
     const [inspectors, setInspectors] =
         useState<Inspector[]>([])
 
+    // 计划周
+    const [week, setWeek] =
+        useState(weekStart())
+
+    // 实际任务日期
     const [date, setDate] =
         useState(today())
 
@@ -505,41 +510,51 @@ function Allocation({ notify }: { notify: any }) {
 
 
     // ========================================================
-    // 星期
-    //
-    // 整个页面只使用这一份 week
-    // 导入 / 查询 / 预览 / 创建全部传同一个值
+    // 当前计划周结束日期
     // ========================================================
 
-    const week = useMemo(
-        () => weekStart(date),
-        [date],
-    )
-
-
     const weekEnd = useMemo(() => {
+        const [year, month, day] = week
+            .split('-')
+            .map(Number)
+
         const d = new Date(
-            `${week}T00:00:00`,
+            year,
+            month - 1,
+            day,
         )
 
         d.setDate(
             d.getDate() + 6,
         )
 
-        return d
-            .toISOString()
-            .slice(0, 10)
+        const y =
+            d.getFullYear()
+
+        const m =
+            String(
+                d.getMonth() + 1,
+            ).padStart(2, '0')
+
+        const dd =
+            String(
+                d.getDate(),
+            ).padStart(2, '0')
+
+        return `${y}-${m}-${dd}`
     }, [week])
 
 
     // ========================================================
+    // 任务日期是否属于当前计划周
+    // ========================================================
+
+    const taskDateInSelectedWeek =
+        weekStart(date) === week
+
+
+    // ========================================================
     // 加载质检员
-    //
-    // target_tasks > 0
-    // 使用数据库设置
-    //
-    // 没有设置 / 为0
-    // 默认10
     // ========================================================
 
     const loadInspectors = async () => {
@@ -562,18 +577,16 @@ function Allocation({ notify }: { notify: any }) {
 
         setInspectors(list)
 
-
         setCounts(
             Object.fromEntries(
                 list.map(
-                    (i) => [
-                        i.id,
-
+                    (inspector) => [
+                        inspector.id,
                         Number(
-                            i.target_tasks,
+                            inspector.target_tasks,
                         ) > 0
                             ? Number(
-                                  i.target_tasks,
+                                  inspector.target_tasks,
                               )
                             : 10,
                     ],
@@ -581,13 +594,12 @@ function Allocation({ notify }: { notify: any }) {
             ),
         )
 
-
         setPhones(
             Object.fromEntries(
                 list.map(
-                    (i) => [
-                        i.id,
-                        i.current_phone ||
+                    (inspector) => [
+                        inspector.id,
+                        inspector.current_phone ||
                             '',
                     ],
                 ),
@@ -597,7 +609,7 @@ function Allocation({ notify }: { notify: any }) {
 
 
     // ========================================================
-    // 加载本周计划
+    // 加载当前选择计划周
     // ========================================================
 
     const loadPlan = async () => {
@@ -641,6 +653,24 @@ function Allocation({ notify }: { notify: any }) {
 
 
     // ========================================================
+    // 选择计划周
+    // ========================================================
+
+    const changePlanWeek = (
+        value: string,
+    ) => {
+        const selectedWeek =
+            weekStart(value)
+
+        setWeek(
+            selectedWeek,
+        )
+
+        setPreview([])
+    }
+
+
+    // ========================================================
     // 导入本周计划
     //
     // promoter_id,required_count
@@ -657,7 +687,6 @@ function Allocation({ notify }: { notify: any }) {
                     await file.text(),
                 )
 
-
             if (
                 raw.length ===
                 0
@@ -669,10 +698,8 @@ function Allocation({ notify }: { notify: any }) {
                 return
             }
 
-
             const errors:
                 string[] = []
-
 
             const parsed =
                 raw.map(
@@ -683,13 +710,11 @@ function Allocation({ notify }: { notify: any }) {
                         const line =
                             index + 2
 
-
                         const promoter_id =
                             String(
                                 row.promoter_id ||
                                     '',
                             ).trim()
-
 
                         const countText =
                             String(
@@ -697,12 +722,10 @@ function Allocation({ notify }: { notify: any }) {
                                     '',
                             ).trim()
 
-
                         const required_count =
                             Number(
                                 countText,
                             )
-
 
                         if (
                             !promoter_id
@@ -711,7 +734,6 @@ function Allocation({ notify }: { notify: any }) {
                                 `第 ${line} 行：promoter_id 为空`,
                             )
                         }
-
 
                         if (
                             !countText
@@ -731,7 +753,6 @@ function Allocation({ notify }: { notify: any }) {
                             )
                         }
 
-
                         return {
                             promoter_id,
                             required_count,
@@ -743,7 +764,7 @@ function Allocation({ notify }: { notify: any }) {
 
 
             // ================================================
-            // 重复 ID
+            // 检查重复 ID
             // ================================================
 
             const firstSeen =
@@ -751,7 +772,6 @@ function Allocation({ notify }: { notify: any }) {
                     string,
                     number
                 >()
-
 
             for (
                 const row of
@@ -763,19 +783,17 @@ function Allocation({ notify }: { notify: any }) {
                     continue
                 }
 
-
-                const oldLine =
+                const previousLine =
                     firstSeen.get(
                         row.promoter_id,
                     )
 
-
                 if (
-                    oldLine !==
+                    previousLine !==
                     undefined
                 ) {
                     errors.push(
-                        `第 ${row.__line} 行：推广员 ${row.promoter_id} 重复，第一次出现在第 ${oldLine} 行`,
+                        `第 ${row.__line} 行：推广员 ${row.promoter_id} 重复，第一次出现在第 ${previousLine} 行`,
                     )
                 } else {
                     firstSeen.set(
@@ -807,7 +825,7 @@ function Allocation({ notify }: { notify: any }) {
 
 
             // ================================================
-            // 检查推广员存在
+            // 检查推广员是否存在
             // ================================================
 
             const {
@@ -821,9 +839,9 @@ function Allocation({ notify }: { notify: any }) {
                         p_promoter_ids:
                             parsed.map(
                                 (
-                                    r,
+                                    row,
                                 ) =>
-                                    r.promoter_id,
+                                    row.promoter_id,
                             ),
                     },
                 )
@@ -836,6 +854,7 @@ function Allocation({ notify }: { notify: any }) {
                     validationError.message,
                     'error',
                 )
+
                 return
             }
 
@@ -853,16 +872,15 @@ function Allocation({ notify }: { notify: any }) {
                             const original =
                                 parsed.find(
                                     (
-                                        r,
+                                        row,
                                     ) =>
-                                        r.promoter_id ===
+                                        row.promoter_id ===
                                         item.promoter_id,
                                 )
 
                             return `第 ${original?.__line || '?'} 行：推广员 ID ${item.promoter_id} 不存在`
                         },
                     )
-
 
                 notify(
                     `${messages
@@ -904,13 +922,13 @@ function Allocation({ notify }: { notify: any }) {
                 )
 
 
-            const ok =
+            const confirmed =
                 window.confirm(
-                    `确定导入 ${week} 至 ${weekEnd} 的质检计划吗？\n\n推广员：${cleanRows.length} 人\n计划质检：${total} 次\n\n同一周已有计划时会进行替换/更新`,
+                    `确定导入 ${week} 至 ${weekEnd} 的质检计划吗？\n\n推广员：${cleanRows.length} 人\n计划质检：${total} 次\n\n同一周已有计划时会进行替换或更新`,
                 )
 
 
-            if (!ok) {
+            if (!confirmed) {
                 return
             }
 
@@ -936,6 +954,7 @@ function Allocation({ notify }: { notify: any }) {
                     error.message,
                     'error',
                 )
+
                 return
             }
 
@@ -957,7 +976,7 @@ function Allocation({ notify }: { notify: any }) {
 
 
     // ========================================================
-    // 修改单个推广员 required_count
+    // 修改推广员计划次数
     // ========================================================
 
     const changeRequiredCount =
@@ -971,13 +990,11 @@ function Allocation({ notify }: { notify: any }) {
                 return
             }
 
-
             const assigned =
                 Number(
                     row.assigned_count ||
                         0,
                 )
-
 
             if (
                 nextCount <
@@ -987,14 +1004,13 @@ function Allocation({ notify }: { notify: any }) {
                     `${row.promoter_name} 已经分配 ${assigned} 次，计划不能降低到 ${nextCount} 次`,
                     'error',
                 )
+
                 return
             }
-
 
             setSavingPromoter(
                 row.promoter_id,
             )
-
 
             const { error } =
                 await supabase.rpc(
@@ -1011,11 +1027,9 @@ function Allocation({ notify }: { notify: any }) {
                     },
                 )
 
-
             setSavingPromoter(
                 null,
             )
-
 
             if (error) {
                 notify(
@@ -1025,11 +1039,9 @@ function Allocation({ notify }: { notify: any }) {
                 return
             }
 
-
             setPreview([])
 
             await loadPlan()
-
 
             notify(
                 `${row.promoter_name} 本周计划已修改为 ${nextCount} 次`,
@@ -1038,17 +1050,18 @@ function Allocation({ notify }: { notify: any }) {
 
 
     // ========================================================
-    // 删除尚未分配的推广员
+    // 删除推广员
     // ========================================================
 
     const removePromoter =
-        async (row: any) => {
+        async (
+            row: any,
+        ) => {
             const assigned =
                 Number(
                     row.assigned_count ||
                         0,
                 )
-
 
             if (
                 assigned > 0
@@ -1057,20 +1070,18 @@ function Allocation({ notify }: { notify: any }) {
                     `${row.promoter_name} 已经有 ${assigned} 个任务，不能直接删除`,
                     'error',
                 )
+
                 return
             }
 
-
-            const ok =
+            const confirmed =
                 window.confirm(
-                    `确定把 ${row.promoter_name} (${row.promoter_id}) 从本周计划删除吗？`,
+                    `确定把 ${row.promoter_name} (${row.promoter_id}) 从 ${week} 这一周的质检计划删除吗？`,
                 )
 
-
-            if (!ok) {
+            if (!confirmed) {
                 return
             }
-
 
             const { error } =
                 await supabase.rpc(
@@ -1084,7 +1095,6 @@ function Allocation({ notify }: { notify: any }) {
                     },
                 )
 
-
             if (error) {
                 notify(
                     error.message,
@@ -1093,14 +1103,12 @@ function Allocation({ notify }: { notify: any }) {
                 return
             }
 
-
             setPreview([])
 
             await loadPlan()
 
-
             notify(
-                `已删除 ${row.promoter_name}`,
+                `已从计划删除 ${row.promoter_name}`,
             )
         }
 
@@ -1122,7 +1130,6 @@ function Allocation({ notify }: { notify: any }) {
                 return
             }
 
-
             const assigned =
                 planRows.reduce(
                     (
@@ -1137,30 +1144,25 @@ function Allocation({ notify }: { notify: any }) {
                     0,
                 )
 
-
-            const ok =
+            const confirmed =
                 window.confirm(
-                    `确定重置 ${week} 至 ${weekEnd} 的质检计划吗？\n\n计划人数：${planRows.length}\n已分配任务：${assigned}\n\n如果已经存在进行中、已提交或审核任务，系统会拒绝重置。`,
+                    `确定重置 ${week} 至 ${weekEnd} 的质检计划吗？\n\n计划推广员：${planRows.length} 人\n已分配任务：${assigned}\n\n如果存在进行中、已提交或审核任务，系统会阻止重置`,
                 )
 
-
-            if (!ok) {
+            if (!confirmed) {
                 return
             }
 
-
             let deletePending =
                 false
-
 
             if (
                 assigned > 0
             ) {
                 deletePending =
                     window.confirm(
-                        `本周已经存在任务\n\n点击确定：如果这些任务都还是“待执行”，删除这些任务并重置计划\n\n点击取消：不做任何修改`,
+                        `本周已经存在任务\n\n点击确定：如果任务仍然只是待执行，则删除待执行任务并重置\n\n点击取消：不做修改`,
                     )
-
 
                 if (
                     !deletePending
@@ -1169,9 +1171,7 @@ function Allocation({ notify }: { notify: any }) {
                 }
             }
 
-
             setResetting(true)
-
 
             const {
                 data,
@@ -1188,9 +1188,7 @@ function Allocation({ notify }: { notify: any }) {
                     },
                 )
 
-
             setResetting(false)
-
 
             if (error) {
                 notify(
@@ -1200,14 +1198,12 @@ function Allocation({ notify }: { notify: any }) {
                 return
             }
 
-
             setPreview([])
 
             await loadPlan()
 
-
             notify(
-                `本周计划已重置，删除计划 ${data?.deleted_plan_rows || 0} 条，删除待执行任务 ${data?.deleted_tasks || 0} 条`,
+                `计划已重置，删除计划 ${data?.deleted_plan_rows || 0} 条，删除待执行任务 ${data?.deleted_tasks || 0} 条`,
             )
         }
 
@@ -1292,7 +1288,7 @@ function Allocation({ notify }: { notify: any }) {
 
 
     // ========================================================
-    // 质检员本次总目标产能
+    // 总产能
     // ========================================================
 
     const requestedCapacity =
@@ -1315,11 +1311,7 @@ function Allocation({ notify }: { notify: any }) {
 
 
     // ========================================================
-    // 本次真正会尝试生成的数量
-    //
-    // 产能50
-    // 剩余16
-    // => 16
+    // 本次真正最多生成
     // ========================================================
 
     const actualBatchTarget =
@@ -1330,36 +1322,40 @@ function Allocation({ notify }: { notify: any }) {
 
 
     // ========================================================
-    // requests
+    // RPC requests
     // ========================================================
 
     const buildRequests =
         () =>
             inspectors
                 .filter(
-                    (i) =>
+                    (
+                        inspector,
+                    ) =>
                         Number(
                             counts[
-                                i.id
+                                inspector.id
                             ] || 0,
                         ) > 0,
                 )
                 .map(
-                    (i) => ({
+                    (
+                        inspector,
+                    ) => ({
                         inspector_id:
-                            i.id,
+                            inspector.id,
 
                         phone:
                             String(
                                 phones[
-                                    i.id
+                                    inspector.id
                                 ] || '',
                             ).trim(),
 
                         count:
                             Number(
                                 counts[
-                                    i.id
+                                    inspector.id
                                 ] || 0,
                             ),
                     }),
@@ -1367,7 +1363,7 @@ function Allocation({ notify }: { notify: any }) {
 
 
     // ========================================================
-    // 基础验证
+    // 验证
     // ========================================================
 
     const validateAllocation =
@@ -1377,9 +1373,22 @@ function Allocation({ notify }: { notify: any }) {
                 0
             ) {
                 notify(
-                    `这一周 ${week} 还没有质检计划，请先导入 CSV`,
+                    `${week} 这一周还没有质检计划，请先导入计划`,
                     'error',
                 )
+
+                return false
+            }
+
+
+            if (
+                !taskDateInSelectedWeek
+            ) {
+                notify(
+                    `任务日期 ${date} 不属于当前计划周 ${week} 至 ${weekEnd}`,
+                    'error',
+                )
+
                 return false
             }
 
@@ -1389,9 +1398,10 @@ function Allocation({ notify }: { notify: any }) {
                 0
             ) {
                 notify(
-                    '本周计划已经全部分配完成',
+                    '当前计划周已经全部分配完成',
                     'error',
                 )
+
                 return false
             }
 
@@ -1404,6 +1414,7 @@ function Allocation({ notify }: { notify: any }) {
                     '请至少给一位质检员设置目标任务数',
                     'error',
                 )
+
                 return false
             }
 
@@ -1419,14 +1430,12 @@ function Allocation({ notify }: { notify: any }) {
                         ] || 0,
                     )
 
-
                 const phone =
                     String(
                         phones[
                             inspector.id
                         ] || '',
                     ).trim()
-
 
                 if (
                     count > 0 &&
@@ -1436,6 +1445,7 @@ function Allocation({ notify }: { notify: any }) {
                         `${inspector.nickname} 的目标任务是 ${count}，但没有填写质检号码`,
                         'error',
                     )
+
                     return false
                 }
             }
@@ -1446,7 +1456,7 @@ function Allocation({ notify }: { notify: any }) {
 
 
     // ========================================================
-    // PREVIEW
+    // 预览
     // ========================================================
 
     const make =
@@ -1456,7 +1466,6 @@ function Allocation({ notify }: { notify: any }) {
             ) {
                 return
             }
-
 
             const {
                 data,
@@ -1476,20 +1485,18 @@ function Allocation({ notify }: { notify: any }) {
                     },
                 )
 
-
             if (error) {
                 notify(
                     error.message,
                     'error',
                 )
+
                 return
             }
-
 
             setPreview(
                 data || [],
             )
-
 
             notify(
                 `预览成功：本次将生成 ${data?.length || 0} 个任务`,
@@ -1498,7 +1505,7 @@ function Allocation({ notify }: { notify: any }) {
 
 
     // ========================================================
-    // CONFIRM
+    // 确认生成
     // ========================================================
 
     const confirmAllocation =
@@ -1511,23 +1518,31 @@ function Allocation({ notify }: { notify: any }) {
                     '请先预览分配',
                     'error',
                 )
+
                 return
             }
 
+            if (
+                !taskDateInSelectedWeek
+            ) {
+                notify(
+                    `任务日期 ${date} 不属于当前计划周 ${week} 至 ${weekEnd}`,
+                    'error',
+                )
 
-            const ok =
+                return
+            }
+
+            const confirmed =
                 window.confirm(
                     `确定生成 ${preview.length} 个质检任务吗？`,
                 )
 
-
-            if (!ok) {
+            if (!confirmed) {
                 return
             }
 
-
             setConfirming(true)
-
 
             const {
                 data,
@@ -1547,61 +1562,128 @@ function Allocation({ notify }: { notify: any }) {
                     },
                 )
 
-
             setConfirming(false)
-
 
             if (error) {
                 notify(
                     error.message,
                     'error',
                 )
+
                 return
             }
 
-
             setPreview([])
-
 
             await loadPlan()
 
-
             notify(
-                `成功生成 ${data?.created_count || 0} 个任务，本周还剩 ${data?.remaining_after || 0} 个待分配`,
+                `成功生成 ${data?.created_count || 0} 个任务，当前计划周还剩 ${data?.remaining_after || 0} 个待分配`,
             )
         }
 
+
+    // ========================================================
+    // UI
+    // ========================================================
 
     return (
         <>
             <PageHead
                 title="智能分配"
-                text="推广员计划是本周硬需求，质检员任务数量是本次目标产能，系统会自动平衡"
-            >
-                <label className="date-large">
-                    任务日期
-
-                    <input
-                        type="date"
-                        value={date}
-                        onChange={(
-                            e,
-                        ) =>
-                            setDate(
-                                e.target
-                                    .value,
-                            )
-                        }
-                    />
-                </label>
-            </PageHead>
+                text="先选择计划周，再导入本周质检需求，最后选择任务日期并分配给质检员"
+            />
 
 
             {/* ================================================= */}
-            {/* WEEK PLAN */}
+            {/* PLAN WEEK */}
             {/* ================================================= */}
 
-            <Panel title="本周质检计划">
+            <Panel title="质检计划周">
+                <div
+                    style={{
+                        display:
+                            'flex',
+                        gap: 20,
+                        alignItems:
+                            'flex-end',
+                        flexWrap:
+                            'wrap',
+                    }}
+                >
+                    <label className="date-large">
+                        计划周
+
+                        <input
+                            type="date"
+                            value={week}
+                            onChange={(
+                                e,
+                            ) =>
+                                changePlanWeek(
+                                    e
+                                        .target
+                                        .value,
+                                )
+                            }
+                        />
+                    </label>
+
+
+                    <div
+                        style={{
+                            padding:
+                                '10px 14px',
+                            border:
+                                '1px solid #dfe6ef',
+                            borderRadius:
+                                12,
+                        }}
+                    >
+                        <small
+                            style={{
+                                display:
+                                    'block',
+                                color:
+                                    '#778196',
+                            }}
+                        >
+                            当前计划周期
+                        </small>
+
+                        <b>
+                            {week}
+                        </b>
+
+                        <span>
+                            {' '}
+                            至{' '}
+                        </span>
+
+                        <b>
+                            {weekEnd}
+                        </b>
+                    </div>
+                </div>
+
+                <div
+                    style={{
+                        marginTop: 10,
+                        color:
+                            '#778196',
+                        fontSize: 13,
+                    }}
+                >
+                    可以提前选择下周或未来星期，并预先导入该周的推广员质检计划
+                </div>
+            </Panel>
+
+
+            {/* ================================================= */}
+            {/* WEEKLY PLAN */}
+            {/* ================================================= */}
+
+            <Panel title="推广员质检计划">
                 <div
                     style={{
                         display:
@@ -1616,16 +1698,6 @@ function Allocation({ notify }: { notify: any }) {
                     }}
                 >
                     <div>
-                        <h3
-                            style={{
-                                margin:
-                                    '0 0 8px',
-                            }}
-                        >
-                            {week} 至{' '}
-                            {weekEnd}
-                        </h3>
-
                         <b>
                             CSV 格式
                         </b>
@@ -1662,8 +1734,7 @@ function Allocation({ notify }: { notify: any }) {
                                     '#778196',
                             }}
                         >
-                            required_count
-                            表示这个推广员本周必须完成的质检次数
+                            required_count 表示这个推广员在当前计划周必须接受的质检次数
                         </small>
                     </div>
 
@@ -1728,7 +1799,7 @@ function Allocation({ notify }: { notify: any }) {
 
                             {resetting
                                 ? '重置中…'
-                                : '重置本周计划'}
+                                : '重置这一周计划'}
                         </button>
                     </div>
                 </div>
@@ -1747,7 +1818,7 @@ function Allocation({ notify }: { notify: any }) {
                                 ? '…'
                                 : planRows.length
                         }
-                        note="本周名单人数"
+                        note="当前计划周人数"
                     />
 
                     <Stat
@@ -1757,7 +1828,7 @@ function Allocation({ notify }: { notify: any }) {
                                 ? '…'
                                 : totalRequired
                         }
-                        note="硬性需求"
+                        note="必须完成次数"
                     />
 
                     <Stat
@@ -1853,6 +1924,7 @@ function Allocation({ notify }: { notify: any }) {
                                                     }}
                                                 >
                                                     <button
+                                                        type="button"
                                                         className="btn secondary"
                                                         disabled={
                                                             saving ||
@@ -1873,13 +1945,16 @@ function Allocation({ notify }: { notify: any }) {
                                                         −
                                                     </button>
 
+
                                                     <strong>
                                                         {
                                                             required
                                                         }
                                                     </strong>
 
+
                                                     <button
+                                                        type="button"
                                                         className="btn secondary"
                                                         disabled={
                                                             saving
@@ -1904,11 +1979,13 @@ function Allocation({ notify }: { notify: any }) {
                                                 }
                                             </td>
 
+
                                             <td>
                                                 {
                                                     row.completed_count
                                                 }
                                             </td>
+
 
                                             <td>
                                                 <strong>
@@ -1917,6 +1994,7 @@ function Allocation({ notify }: { notify: any }) {
                                                     }
                                                 </strong>
                                             </td>
+
 
                                             <td>
                                                 <button
@@ -1947,15 +2025,94 @@ function Allocation({ notify }: { notify: any }) {
                     planRows.length ===
                         0 && (
                     <div className="empty-hint">
-                        {week}{' '}
-                        这一周还没有质检计划，请导入 CSV
+                        {week} 至 {weekEnd} 还没有质检计划
                     </div>
                 )}
             </Panel>
 
 
             {/* ================================================= */}
-            {/* INSPECTORS */}
+            {/* TASK DATE */}
+            {/* ================================================= */}
+
+            <Panel title="任务日期">
+                <div
+                    style={{
+                        display:
+                            'flex',
+                        gap: 16,
+                        alignItems:
+                            'center',
+                        flexWrap:
+                            'wrap',
+                    }}
+                >
+                    <label className="date-large">
+                        任务执行日期
+
+                        <input
+                            type="date"
+                            value={date}
+                            onChange={(
+                                e,
+                            ) => {
+                                setDate(
+                                    e
+                                        .target
+                                        .value,
+                                )
+
+                                setPreview(
+                                    [],
+                                )
+                            }}
+                        />
+                    </label>
+
+
+                    {taskDateInSelectedWeek ? (
+                        <span className="review-badge approved">
+                            日期属于当前计划周
+                        </span>
+                    ) : (
+                        <span className="review-badge changes_requested">
+                            日期不属于当前计划周
+                        </span>
+                    )}
+                </div>
+
+
+                {!taskDateInSelectedWeek && (
+                    <div
+                        style={{
+                            marginTop: 10,
+                            padding:
+                                12,
+                            borderRadius:
+                                10,
+                            background:
+                                '#fff4f4',
+                        }}
+                    >
+                        任务日期{' '}
+                        <b>
+                            {date}
+                        </b>{' '}
+                        不属于当前计划周{' '}
+                        <b>
+                            {week}
+                        </b>{' '}
+                        至{' '}
+                        <b>
+                            {weekEnd}
+                        </b>
+                    </div>
+                )}
+            </Panel>
+
+
+            {/* ================================================= */}
+            {/* INSPECTOR TARGET */}
             {/* ================================================= */}
 
             <Panel title="质检员本次目标">
@@ -1967,8 +2124,7 @@ function Allocation({ notify }: { notify: any }) {
                             '#778196',
                     }}
                 >
-                    默认目标为 10
-                    个任务。这里是目标产能，不是必须精确生成的数量。某个号码无法完成时，系统会自动尝试由其他质检员补位。
+                    默认目标为 10 个任务。目标表示本次可承担的产能，不代表必须精确生成 10 个任务
                 </div>
 
 
@@ -2086,10 +2242,6 @@ function Allocation({ notify }: { notify: any }) {
                 </div>
 
 
-                {/* ============================================= */}
-                {/* SUMMARY */}
-                {/* ============================================= */}
-
                 <div
                     style={{
                         marginTop: 18,
@@ -2107,7 +2259,7 @@ function Allocation({ notify }: { notify: any }) {
                 >
                     <div>
                         <small>
-                            本周待分配
+                            当前计划待分配
                         </small>
 
                         <div>
@@ -2167,7 +2319,7 @@ function Allocation({ notify }: { notify: any }) {
 
                     <div>
                         <small>
-                            本次后预计剩余
+                            预计分配后剩余
                         </small>
 
                         <div>
@@ -2204,25 +2356,25 @@ function Allocation({ notify }: { notify: any }) {
                                 '#f4f8ff',
                         }}
                     >
-                        质检员总目标是{' '}
+                        当前质检员目标产能为{' '}
                         <b>
                             {
                                 requestedCapacity
                             }
                         </b>{' '}
-                        个，但本周只剩{' '}
+                        个，但计划只剩{' '}
                         <b>
                             {
                                 remainingToAssign
                             }
                         </b>{' '}
-                        个任务，因此本次只会生成{' '}
+                        个，因此本次最多只生成{' '}
                         <b>
                             {
                                 actualBatchTarget
                             }
                         </b>{' '}
-                        个，不会超额生成
+                        个
                     </div>
                 )}
 
@@ -2237,7 +2389,8 @@ function Allocation({ notify }: { notify: any }) {
                             planRows.length ===
                                 0 ||
                             remainingToAssign ===
-                                0
+                                0 ||
+                            !taskDateInSelectedWeek
                         }
                     >
                         <Search />
@@ -2250,7 +2403,8 @@ function Allocation({ notify }: { notify: any }) {
                         disabled={
                             preview.length ===
                                 0 ||
-                            confirming
+                            confirming ||
+                            !taskDateInSelectedWeek
                         }
                         onClick={() =>
                             void confirmAllocation()
@@ -2305,7 +2459,9 @@ function Allocation({ notify }: { notify: any }) {
                                         </span>
                                     </div>
 
+
                                     <ChevronRight />
+
 
                                     <div>
                                         <b>
